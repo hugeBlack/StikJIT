@@ -670,8 +670,10 @@ struct LoadingView: View {
 
 public func showAlert(title: String, message: String, showOk: Bool, showTryAgain: Bool = false, primaryButtonText: String? = nil, messageType: MessageType = .error, completion: @escaping (Bool) -> Void) {
     DispatchQueue.main.async {
-        let rootViewController = UIApplication.shared.windows.last?.rootViewController
-        
+        guard let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene else {
+            return
+        }
+        let rootViewController = scene.windows.first?.rootViewController
         if showTryAgain {
             let customErrorView = CustomErrorView(
                 title: title,
