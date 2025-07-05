@@ -321,6 +321,7 @@ struct HomeView: View {
         }
         .onChange(of: scriptViewShow) { oldValue, newValue in
             if !newValue, let jsModel {
+                jsModel.executionInterrupted = true
                 jsModel.semaphore?.signal()
             }
         }

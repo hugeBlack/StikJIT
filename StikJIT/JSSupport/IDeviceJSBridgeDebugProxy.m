@@ -17,7 +17,7 @@ NSString* handleJSContextSendDebugCommand(JSContext* context, NSString* commandS
     command = debugserver_command_new([commandStr UTF8String], NULL, 0);
 
     char* attach_response = 0;
-    IdeviceFfiError* err = debug_proxy_send_command2(debugProxy, command, &attach_response);
+    IdeviceFfiError* err = debug_proxy_send_command(debugProxy, command, &attach_response);
     debugserver_command_free(command);
     if (err) {
         context.exception = [JSValue valueWithObject:[NSString stringWithFormat:@"error code %d, msg %s", err->code, err->message] inContext:context];

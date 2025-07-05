@@ -18,20 +18,6 @@
 
 #include "jit.h"
 
-IdeviceFfiError* debug_proxy_send_command2(struct DebugProxyHandle *handle, struct DebugserverCommandHandle *command, char **response) {
-    IdeviceFfiError* err = debug_proxy_send_command(handle, command, response);
-    if(err) {
-        return err;
-    }
-    for(int i = 0; i < 10; ++i) {
-        if(*response) {
-            return err;
-        }
-        debug_proxy_read_response(handle, response);
-    }
-    return err;
-}
-
 void runDebugServerCommand(int pid, DebugProxyHandle* debug_proxy, LogFuncC logger, DebugAppCallback callback) {
     // enable QStartNoAckMode
     char *disableResponse = NULL;
@@ -49,6 +35,7 @@ void runDebugServerCommand(int pid, DebugProxyHandle* debug_proxy, LogFuncC logg
         callback(pid, debug_proxy, semaphore);
         dispatch_semaphore_wait(semaphore, DISPATCH_TIME_FOREVER);
         err = debug_proxy_send_raw(debug_proxy, "\x03", 1);
+        usleep(500);
     } else {
         // Send vAttach command with PID in hex
         char attach_command[64];
@@ -61,7 +48,7 @@ void runDebugServerCommand(int pid, DebugProxyHandle* debug_proxy, LogFuncC logg
         }
         
         char *attach_response = NULL;
-        err = debug_proxy_send_command2(debug_proxy, attach_cmd, &attach_response);
+        err = debug_proxy_send_command(debug_proxy, attach_cmd, &attach_response);
         debugserver_command_free(attach_cmd);
         
         if (err) {
@@ -79,11 +66,12 @@ void runDebugServerCommand(int pid, DebugProxyHandle* debug_proxy, LogFuncC logg
         logger("Failed to create detach command");
     } else {
         char *detach_response = NULL;
-        err = debug_proxy_send_command2(debug_proxy, detach_cmd, &detach_response);
+        err = debug_proxy_send_command(debug_proxy, detach_cmd, &detach_response);
         debugserver_command_free(detach_cmd);
         
         if (err) {
-            logger("Failed to detach from process: %d", err);
+            logger("Failed to detach from process: %d", err->code);
+            idevice_error_free(err);
         } else if (detach_response != NULL) {
             logger("Detach response: %s", detach_response);
             idevice_string_free(detach_response);
@@ -188,6 +176,11 @@ int debug_app(IdeviceProviderHandle* tcp_provider, const char *bundle_id, LogFun
       return 1;
     }
     printf("Successfully launched app with PID: %llu\n", pid);
+    
+    char* path = malloc(2048);
+    snprintf(path, 2048, "%s/Documents/debugProxy.pcap", getenv("HOME"));
+    adapter_pcap(adapter, path);
+    free(path);
 
     printf("\n=== Setting up Debug Proxy ===\n");
 

@@ -12,7 +12,8 @@ import JavaScriptCore
 class RunJSViewModel : ObservableObject {
     var context: JSContext?
     @Published var logs: [String] = []
-    @Published var scriptName : String = "Script"
+    @Published var scriptName: String = "Script"
+    @Published var executionInterrupted = false
     var pid: Int
     var debugProxy: OpaquePointer?
     var semaphore: dispatch_semaphore_t?
@@ -33,8 +34,12 @@ class RunJSViewModel : ObservableObject {
         
         let sendCommandFunction: @convention(block) (String?) -> String? = { commandStr in
             guard let commandStr else {
-                self.context?.exception = JSValue(object: "command should not be nil", in: self.context!)
-                return nil
+                self.context?.exception = JSValue(object: "Command should not be nil.", in: self.context!)
+                return ""
+            }
+            if self.executionInterrupted {
+                self.context?.exception = JSValue(object: "Script execution is interrupted by StikDebug.", in: self.context!)
+                return ""
             }
             
             return handleJSContextSendDebugCommand(self.context, commandStr, self.debugProxy) ?? ""
