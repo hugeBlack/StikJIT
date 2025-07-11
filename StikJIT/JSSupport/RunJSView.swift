@@ -69,14 +69,14 @@ class RunJSViewModel: ObservableObject {
         if let semaphore {
             semaphore.signal()
         }
-        PiPController.shared.stopPiP()
         
         DispatchQueue.main.async {
             if let exception = self.context?.exception {
                 self.logs.append(exception.debugDescription)
             }
             
-            self.logs.append("Script Execution Completed, \nYou are safe to close the PIP Window.")
+            self.logs.append("Script Execution Completed")
+            self.logs.append("You are safe to close the PIP Window.")
         }
     }
 }
@@ -99,6 +99,7 @@ struct RunJSViewPiP: View {
         .onReceive(timer) { _ in
             self.logs = model?.logs ?? []
         }
+        .frame(width: 300, height: 150)
     }
 }
 

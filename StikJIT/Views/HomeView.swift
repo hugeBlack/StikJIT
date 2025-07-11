@@ -7,6 +7,7 @@
 
 import SwiftUI
 import UniformTypeIdentifiers
+import Pipify
 
 extension UIDocumentPickerViewController {
     @objc func fix_init(forOpeningContentTypes contentTypes: [UTType], asCopy: Bool) -> UIDocumentPickerViewController {
@@ -58,19 +59,6 @@ struct HomeView: View {
             // Use system background
             Color(colorScheme == .dark ? .black : .white)
             .edgesIgnoringSafeArea(.all)
-            
-            if useDefaultScript {
-                VideoPlayerView(view: RunJSViewPiP(model: $jsModel))
-                    .frame(width: 200, height: 150)
-                    .background(Color.clear)
-                    .cornerRadius(10)
-                    .onAppear() {
-                        Timer.scheduledTimer(withTimeInterval: 0.3, repeats: false) { _ in
-                            PiPController.shared.startPiP()
-                        }
-                    }
-                    .overlay(colorScheme == .dark ? .black : .white)
-            }
             
             VStack(spacing: 25) {
                 Spacer()
@@ -237,12 +225,7 @@ struct HomeView: View {
         .onReceive(timer) { _ in
             refreshBackground()
             checkPairingFileExists()
-            
-            if useDefaultScript {
-                PiPController.shared.startPiP()
-            } else {
-                PiPController.shared.stopPiP()
-            }
+
         }
         .fileImporter(isPresented: $isShowingPairingFilePicker, allowedContentTypes: [UTType(filenameExtension: "mobiledevicepairing", conformingTo: .data)!, .propertyList]) {result in
             switch result {
@@ -320,6 +303,9 @@ struct HomeView: View {
                 startJITInBackground(with: selectedBundle)
             }
         }
+        .pipify(isPresented: $isProcessing) {
+            RunJSViewPiP(model: $jsModel)
+        }
         .sheet(isPresented: $scriptViewShow) {
             NavigationView {
                 if let jsModel {
@@ -328,6 +314,7 @@ struct HomeView: View {
                             ToolbarItem(placement: .topBarTrailing) {
                                 Button("Done") {
                                     scriptViewShow = false
+                                    isProcessing = false
                                 }
                             }
                         }
@@ -433,6 +420,7 @@ struct HomeView: View {
             DispatchQueue.global(qos: .background).async {
                 do {
                     try jsModel?.runScript(path: selectedScriptURL)
+                    isProcessing = false
                 } catch {
                     showAlert(title: "Error Occurred While Executing the Default Script.".localized, message: error.localizedDescription, showOk: true)
                 }
