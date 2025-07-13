@@ -357,23 +357,29 @@ struct HomeView: View {
         )
         .onOpenURL { url in
             print(url.path)
-            if url.host != "enable-jit" {
-                return
-            }
-            
-            let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
-            if let bundleId = components?.queryItems?.first(where: { $0.name == "bundle-id" })?.value {
-                if viewDidAppeared {
-                    startJITInBackground(with: bundleId)
-                } else {
-                    pendingBundleIdToEnableJIT = bundleId
+            switch url.host {
+            case "enable-jit":
+                let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+                if let bundleId = components?.queryItems?.first(where: { $0.name == "bundle-id" })?.value {
+                    if viewDidAppeared {
+                        startJITInBackground(with: bundleId)
+                    } else {
+                        pendingBundleIdToEnableJIT = bundleId
+                    }
+                } else if let pidStr = components?.queryItems?.first(where: { $0.name == "pid" })?.value, let pid = Int(pidStr) {
+                    if viewDidAppeared {
+                        startJITInBackground(with: pid)
+                    } else {
+                        pendingPIDToEnableJIT = pid
+                    }
                 }
-            } else if let pidStr = components?.queryItems?.first(where: { $0.name == "pid" })?.value, let pid = Int(pidStr) {
-                if viewDidAppeared {
-                    startJITInBackground(with: pid)
-                } else {
-                    pendingPIDToEnableJIT = pid
+            case "script":
+                let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+                if let script = components?.queryItems?.first(where: { $0.name == "script" })?.value?.data(using: .utf8), let bundleId = components?.queryItems?.first(where: { $0.name == "bundle-id" })?.value  {
+                    startJITInBackground(with: bundleId, script: Data(base64Encoded: script))
                 }
+            default:
+                break
             }
             
         }
@@ -433,14 +439,34 @@ struct HomeView: View {
         }
     }
     
-    private func startJITInBackground(with bundleID: String) {
+    private func getJsCallback(_ script: Data, name: String? = nil) -> DebugAppCallback? {
+        return { pid, debugProxyHandle, semaphore in
+            jsModel = RunJSViewModel(pid: Int(pid), debugProxy: debugProxyHandle, semaphore: semaphore)
+            scriptViewShow = true
+            DispatchQueue.global(qos: .background).async {
+                do {
+                    try jsModel?.runScript(data: script, name: name)
+                    isProcessing = false
+                } catch {
+                    showAlert(title: "Error Occurred While Executing the Default Script.".localized, message: error.localizedDescription, showOk: true)
+                }
+            }
+        }
+    }
+    
+    private func startJITInBackground(with bundleID: String, script: Data? = nil) {
         isProcessing = true
+        let orgValue = enablePiP
+        if script != nil {
+            enablePiP = true
+        }
         
         // Add log message
         LogManager.shared.addInfoLog("Starting Debug for \(bundleID)")
         
         DispatchQueue.global(qos: .background).async {
             var callback: DebugAppCallback? = nil
+            
             if enableAdvancedOptions {
                 let mapping = UserDefaults.standard.dictionary(forKey: "BundleScriptMap") as? [String: String]
                 if let script = mapping?[bundleID] {
@@ -449,6 +475,11 @@ struct HomeView: View {
                     callback = getJsCallback()
                 }
             }
+            
+            if let script {
+                callback = getJsCallback(script, name: bundleID + ".js")
+            }
+            
             let success = JITEnableContext.shared.debugApp(withBundleID: bundleID, logger: { message in
 
                 if let message = message {
@@ -460,6 +491,9 @@ struct HomeView: View {
             DispatchQueue.main.async {
                 LogManager.shared.addInfoLog("Debug process completed for \(bundleID)")
                 isProcessing = false
+                if script != nil {
+                    enablePiP = orgValue
+                }
             }
         }
     }
