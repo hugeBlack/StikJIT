@@ -9,10 +9,11 @@ import SwiftUI
 import UniformTypeIdentifiers
 import Pipify
 
-extension UIDocumentPickerViewController {
-    @objc func fix_init(forOpeningContentTypes contentTypes: [UTType], asCopy: Bool) -> UIDocumentPickerViewController {
-        return fix_init(forOpeningContentTypes: contentTypes, asCopy: true)
-    }
+struct JITEnableConfiguration {
+    var bundleID: String? = nil
+    var pid : Int? = nil
+    var scriptData: Data? = nil
+    var scriptName : String? = nil
 }
 
 struct HomeView: View {
@@ -37,13 +38,13 @@ struct HomeView: View {
     @State private var pidStr = ""
     
     @State private var viewDidAppeared = false
-    @State private var pendingBundleIdToEnableJIT : String? = nil
-    @State private var pendingPIDToEnableJIT : Int? = nil
+    @State private var pendingJITEnableConfiguration : JITEnableConfiguration? = nil
     @AppStorage("enableAdvancedOptions") private var enableAdvancedOptions = false
 
     @AppStorage("useDefaultScript") private var useDefaultScript = false
     @AppStorage("enablePiP") private var enablePiP = true
     @State var scriptViewShow = false
+    @State var pipRequired = false
     @AppStorage("DefaultScriptName") var selectedScript = "attachDetach.js"
     @State var jsModel: RunJSViewModel?
     
@@ -301,12 +302,12 @@ struct HomeView: View {
                 bundleID = selectedBundle
                 isShowingInstalledApps = false
                 HapticFeedbackHelper.trigger()
-                startJITInBackground(with: selectedBundle)
+                startJITInBackground(bundleID: selectedBundle)
             }
         }
         .pipify(isPresented: Binding(
-            get: { useDefaultScript && enablePiP && isProcessing },
-            set: { newValue in isProcessing = newValue }
+            get: { pipRequired && enablePiP },
+            set: { newValue in pipRequired = newValue }
         )) {
             RunJSViewPiP(model: $jsModel)
         }
@@ -318,7 +319,6 @@ struct HomeView: View {
                             ToolbarItem(placement: .topBarTrailing) {
                                 Button("Done") {
                                     scriptViewShow = false
-                                    isProcessing = false
                                 }
                             }
                         }
@@ -348,7 +348,7 @@ struct HomeView: View {
                     showAlert(title: "", message: "Invalid PID".localized, showOk: true, completion: { _ in })
                     return
                 }
-                startJITInBackground(with: pid)
+                startJITInBackground(pid: pid)
                 
             },
             actionCancel: {_ in
@@ -357,52 +357,41 @@ struct HomeView: View {
         )
         .onOpenURL { url in
             print(url.path)
-            switch url.host {
-            case "enable-jit":
-                let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
-                if let bundleId = components?.queryItems?.first(where: { $0.name == "bundle-id" })?.value {
-                    if viewDidAppeared {
-                        startJITInBackground(with: bundleId)
-                    } else {
-                        pendingBundleIdToEnableJIT = bundleId
-                    }
-                } else if let pidStr = components?.queryItems?.first(where: { $0.name == "pid" })?.value, let pid = Int(pidStr) {
-                    if viewDidAppeared {
-                        startJITInBackground(with: pid)
-                    } else {
-                        pendingPIDToEnableJIT = pid
-                    }
+            if url.host != "enable-jit" {
+                return
+            }
+            
+            var config = JITEnableConfiguration()
+            let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+            
+            if let pidStr = components?.queryItems?.first(where: { $0.name == "pid" })?.value, let pid = Int(pidStr) {
+                config.pid = pid
+            }
+            if let bundleId = components?.queryItems?.first(where: { $0.name == "bundle-id" })?.value {
+                config.bundleID = bundleId
+            }
+            if let scriptBase64URL = components?.queryItems?.first(where: { $0.name == "script-data" })?.value?.removingPercentEncoding {
+                let base64 = base64URLToBase64(scriptBase64URL)
+                if let scriptData = Data(base64Encoded: base64) {
+                    config.scriptData = scriptData
                 }
-            case "script":
-                let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
-                if let scriptBase64URL = components?.queryItems?.first(where: { $0.name == "data" })?.value?.removingPercentEncoding,
-                   let bundleId = components?.queryItems?.first(where: { $0.name == "bundle-id" })?.value {
-                    
-                    let base64 = base64URLToBase64(scriptBase64URL)
-                    if let scriptData = Data(base64Encoded: base64) {
-                        startJITInBackground(with: bundleId, script: scriptData)
-                    }
-                } else if let scriptBase64URL = components?.queryItems?.first(where: { $0.name == "data" })?.value?.removingPercentEncoding,
-                          let pidStr = components?.queryItems?.first(where: { $0.name == "pid" })?.value {
-                    let base64 = base64URLToBase64(scriptBase64URL)
-                    if let scriptData = Data(base64Encoded: base64) {
-                        startJITInBackground(with: Int(pidStr) ?? 0, script: scriptData)
-                    }
-                }
-            default:
-                break
+            }
+            if let scriptName = components?.queryItems?.first(where: { $0.name == "script-name" })?.value {
+                config.scriptName = scriptName
+            }
+            
+            if viewDidAppeared {
+                startJITInBackground(bundleID: config.bundleID, pid: config.pid, scriptData: config.scriptData, scriptName: config.scriptName, triggeredByURLScheme: true)
+            } else {
+                pendingJITEnableConfiguration = config
             }
             
         }
         .onAppear() {
             viewDidAppeared = true
-            if let pendingBundleIdToEnableJIT {
-                startJITInBackground(with: pendingBundleIdToEnableJIT)
-                self.pendingBundleIdToEnableJIT = nil
-            }
-            if let pendingPIDToEnableJIT {
-                startJITInBackground(with: pendingPIDToEnableJIT)
-                self.pendingPIDToEnableJIT = nil
+            if let config = pendingJITEnableConfiguration {
+                startJITInBackground(bundleID: config.bundleID, pid: config.pid, scriptData: config.scriptData, scriptName: config.scriptName, triggeredByURLScheme: true)
+                self.pendingJITEnableConfiguration = nil
             }
         }
     }
@@ -427,30 +416,7 @@ struct HomeView: View {
         // but we'll keep it empty to avoid breaking anything
     }
     
-    private func getJsCallback(for scriptName: String? = nil) -> DebugAppCallback? {
-        let name = scriptName ?? selectedScript
-        let selectedScriptURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("scripts").appendingPathComponent(name)
-        
-        if !FileManager.default.fileExists(atPath: selectedScriptURL.path) {
-            return nil
-        }
-        
-        return { pid, debugProxyHandle, semaphore in
-            jsModel = RunJSViewModel(pid: Int(pid), debugProxy: debugProxyHandle, semaphore: semaphore)
-            scriptViewShow = true
-            DispatchQueue.global(qos: .background).async {
-                do {
-                    try jsModel?.runScript(path: selectedScriptURL)
-                    isProcessing = false
-                } catch {
-                    showAlert(title: "Error Occurred While Executing the Default Script.".localized, message: error.localizedDescription, showOk: true)
-                }
-            }
-        }
-    }
-    
-    private func getJsCallback(_ script: Data, name: String? = nil) -> DebugAppCallback? {
+    private func getJsCallback(_ script: Data, name: String? = nil) -> DebugAppCallback {
         return { pid, debugProxyHandle, semaphore in
             jsModel = RunJSViewModel(pid: Int(pid), debugProxy: debugProxyHandle, semaphore: semaphore)
             scriptViewShow = true
@@ -458,7 +424,6 @@ struct HomeView: View {
             DispatchQueue.global(qos: .background).async {
                 do {
                     try jsModel?.runScript(data: script, name: name)
-                    isProcessing = false
                 } catch {
                     showAlert(title: "Error Occurred While Executing the Default Script.".localized, message: error.localizedDescription, showOk: true)
                 }
@@ -466,70 +431,81 @@ struct HomeView: View {
         }
     }
     
-    private func startJITInBackground(with bundleID: String, script: Data? = nil) {
+    // launch app following this order: pid > bundleID
+    // load script following this order: scriptData > script file from script name > saved script for bundleID > default script
+    // if advanced mode is disabled the whole script loading will be skipped. If use default script is disabled default script will not be loaded
+    private func startJITInBackground(bundleID: String? = nil, pid : Int? = nil, scriptData: Data? = nil, scriptName : String? = nil, triggeredByURLScheme: Bool = false) {
         isProcessing = true
         // Add log message
-        LogManager.shared.addInfoLog("Starting Debug for \(bundleID)")
+        LogManager.shared.addInfoLog("Starting Debug for \(bundleID ?? String(pid ?? 0))")
         
         DispatchQueue.global(qos: .background).async {
+            var scriptData = scriptData
+            var scriptName = scriptName
+            if enableAdvancedOptions && scriptData == nil {
+                if scriptName == nil, let bundleID, let mapping = UserDefaults.standard.dictionary(forKey: "BundleScriptMap") as? [String: String] {
+                    scriptName = mapping[bundleID]
+                }
+                
+                if useDefaultScript && scriptName == nil {
+                    scriptName = selectedScript
+                }
+                
+                if scriptData == nil, let scriptName {
+                    let selectedScriptURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+                        .appendingPathComponent("scripts").appendingPathComponent(scriptName)
+                    
+                    if FileManager.default.fileExists(atPath: selectedScriptURL.path) {
+                        do {
+                            scriptData = try Data(contentsOf: selectedScriptURL)
+                        } catch {
+                            print("failed to load data from script \(error)")
+                        }
+                        
+                    }
+                }
+            } else {
+                scriptData = nil
+            }
+            
+            
             var callback: DebugAppCallback? = nil
             
-            if let script {
-                callback = getJsCallback(script, name: bundleID + ".js")
-            } else if enableAdvancedOptions {
-                let mapping = UserDefaults.standard.dictionary(forKey: "BundleScriptMap") as? [String: String]
-                if let script = mapping?[bundleID] {
-                    callback = getJsCallback(for: script)
-                } else if useDefaultScript {
-                    callback = getJsCallback()
+            if let scriptData {
+                callback = getJsCallback(scriptData, name: scriptName ?? bundleID ?? "Script")
+                if triggeredByURLScheme {
+                    usleep(500000)
                 }
+
+                pipRequired = true
             }
             
-            
-            let success = JITEnableContext.shared.debugApp(withBundleID: bundleID, logger: { message in
-
+            let logger: LogFunc = { message in
+                
                 if let message = message {
                     // Log messages from the JIT process
                     LogManager.shared.addInfoLog(message)
                 }
-            }, jsCallback: callback)
-            
-            DispatchQueue.main.async {
-                LogManager.shared.addInfoLog("Debug process completed for \(bundleID)")
-                isProcessing = false
             }
-        }
-    }
-    
-    private func startJITInBackground(with pid: Int, script: Data? = nil) {
-        isProcessing = true
-        
-        // Add log message
-        LogManager.shared.addInfoLog("Starting JIT for pid \(pid)")
-        
-        DispatchQueue.global(qos: .background).async {
-
-            var jsCallback: DebugAppCallback? = nil
-            
-            if let script {
-                jsCallback = getJsCallback(script, name: "Script from PID \(pid)")
-            } else if (enableAdvancedOptions && useDefaultScript) {
-                jsCallback = getJsCallback()
-            }
-            
-            let success = JITEnableContext.shared.debugApp(withPID: Int32(pid), logger: { message in
-
-                if let message = message {
-                    // Log messages from the JIT process
-                    LogManager.shared.addInfoLog(message)
+            var success : Bool
+            if let pid {
+                success = JITEnableContext.shared.debugApp(withPID: Int32(pid), logger: logger, jsCallback: callback)
+            } else if let bundleID {
+                success = JITEnableContext.shared.debugApp(withBundleID: bundleID, logger: logger, jsCallback: callback)
+            } else {
+                DispatchQueue.main.async {
+                    showAlert(title: "Failed to Debug App".localized, message:  "Either bundle ID or PID should be specified.".localized, showOk: true)
                 }
-            }, jsCallback: jsCallback)
-            
-            DispatchQueue.main.async {
-                LogManager.shared.addInfoLog("JIT process completed for \(pid)")
-                showAlert(title: "Success".localized, message: String(format: "JIT has been enabled for pid %d.".localized, pid), showOk: true, messageType: .success)
-                isProcessing = false
+                success = false
             }
+            
+            if success {
+                DispatchQueue.main.async {
+                    LogManager.shared.addInfoLog("Debug process completed for \(bundleID ?? String(pid ?? 0))")
+                }
+            }
+            isProcessing = false
+            pipRequired = false
         }
     }
     
