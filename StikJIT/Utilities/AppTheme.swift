@@ -130,6 +130,10 @@ struct ThemedBackground: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.colorScheme) private var colorScheme
 
+    private var identity: String {
+        style.identityKey
+    }
+
     var body: some View {
         Group {
             switch style {
@@ -166,6 +170,7 @@ struct ThemedBackground: View {
                     .ignoresSafeArea()
             }
         }
+        .id(identity)
     }
 }
 
@@ -329,8 +334,15 @@ private struct ParticleFieldBackground: View {
                     }
                 }
                 .task {
-                    while true {
-                        try? await Task.sleep(nanoseconds: 16_000_000)
+                    while !Task.isCancelled {
+                        do {
+                            try await Task.sleep(nanoseconds: 16_000_000)
+                        } catch is CancellationError {
+                            break
+                        } catch {
+                            break
+                        }
+                        guard !Task.isCancelled else { break }
                         var next = particles
                         for i in next.indices {
                             var p = next[i]
@@ -358,5 +370,38 @@ private extension Array where Element == Color {
         if isEmpty { return [.blue, .purple] }
         if count == 1 { return [self[0], self[0].opacity(0.6)] }
         return self
+    }
+
+    var identityKey: String {
+        map { $0.identityKey }.joined(separator: ",")
+    }
+}
+
+private extension BackgroundStyle {
+    var identityKey: String {
+        switch self {
+        case .staticGradient(let colors):
+            return "static:\(colors.identityKey)"
+        case .animatedGradient(let colors, let speed):
+            return "animated:\(String(format: "%.4f", speed)):\(colors.identityKey)"
+        case .blobs(let colors, let background):
+            return "blobs:\(colors.identityKey)|bg:\(background.identityKey)"
+        case .particles(let particle, let background):
+            return "particles:\(particle.identityKey)|bg:\(background.identityKey)"
+        case .customGradient(let colors):
+            return "custom:\(colors.identityKey)"
+        case .adaptiveGradient(let light, let dark):
+            return "adaptive:l=\(light.identityKey)|d=\(dark.identityKey)"
+        }
+    }
+}
+
+private extension Color {
+    var identityKey: String {
+        if let hex = toHex() {
+            return hex
+        }
+        // Fallback to descriptive string when hex can't be produced (e.g. dynamic colors)
+        return String(describing: self)
     }
 }

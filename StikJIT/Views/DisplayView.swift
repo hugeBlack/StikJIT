@@ -487,16 +487,17 @@ struct DisplayView: View {
             // Grid of theme previews
             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
                 ForEach(AppTheme.allCases, id: \.self) { theme in
+                    let isSelected = selectedBuiltInTheme == theme && selectedCustomTheme == nil
                     ThemePreviewCard(style: theme.backgroundStyle,
                                      title: theme.displayName,
-                                     selected: selectedBuiltInTheme == theme && selectedCustomTheme == nil,
+                                     selected: isSelected,
                                      action: {
                                          guard hasThemeExpansion else { return }
                                          appThemeRaw = theme.rawValue
                                          applyThemePreferences()
                                          showSavedToast()
                                      },
-                                     staticPreview: false)
+                                     staticPreview: !isSelected)
                 }
             }
         }
@@ -582,15 +583,16 @@ struct DisplayView: View {
                     LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
                         ForEach(manager.customThemes, id: \.id) { theme in
                             let identifier = manager.customThemeIdentifier(for: theme)
+                            let isSelected = selectedCustomTheme?.id == theme.id
                             ThemePreviewCard(style: manager.backgroundStyle(for: identifier),
                                              title: theme.name,
-                                             selected: selectedCustomTheme?.id == theme.id,
+                                             selected: isSelected,
                                              action: {
                                                  appThemeRaw = identifier
                                                  applyThemePreferences()
                                                  showSavedToast()
                                              },
-                                             staticPreview: false)
+                                             staticPreview: !isSelected)
                             .contextMenu {
                                 Button("Edit") { editingCustomTheme = theme }
                                 Button("Delete", role: .destructive) {
@@ -955,4 +957,3 @@ private struct CustomThemeEditorView: View {
         }
     }
 }
-
