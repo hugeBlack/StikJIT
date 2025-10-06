@@ -217,6 +217,10 @@ private struct AnimatedGradientBackground: View {
             let gradientColors = colors.ensureMinimumCount()
 
             Rectangle()
+                .fill(.ultraThinMaterial)
+                .ignoresSafeArea(edges: .top)
+                .ignoresSafeArea(edges: .bottom)
+                .background(Rectangle()
                 .fill(
                     AngularGradient(colors: gradientColors + [gradientColors.first!], center: .center, angle: .degrees(0))
                 )
@@ -227,7 +231,7 @@ private struct AnimatedGradientBackground: View {
                 .overlay(
                     LinearGradient(colors: [.black.opacity(0.25), .clear], startPoint: .top, endPoint: .bottom)
                         .ignoresSafeArea()
-                )
+                ))
         }
     }
 }
