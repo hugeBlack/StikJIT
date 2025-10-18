@@ -209,7 +209,7 @@ struct SettingsView: View {
         glassCard {
             VStack(spacing: 16) {
                 VStack {
-                    Image("StikJIT")
+                    Image("StikDebug")
                         .resizable()
                         .aspectRatio(contentMode: .fit)
                         .frame(width: 80, height: 80)

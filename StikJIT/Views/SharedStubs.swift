@@ -10,6 +10,26 @@ import UniformTypeIdentifiers
 import UIKit
 
 // MARK: - Shared glass card wrapper (renamed to avoid conflicts)
+struct MaterialCard<Content: View>: View {
+    let content: Content
+    init(@ViewBuilder content: () -> Content) {
+        self.content = content()
+    }
+    var body: some View {
+        content
+            .padding(20)
+            .background(
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    .fill(.ultraThinMaterial)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 20, style: .continuous)
+                            .strokeBorder(Color.white.opacity(0.15), lineWidth: 1)
+                    )
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+            .shadow(color: .black.opacity(0.15), radius: 12, x: 0, y: 4)
+    }
+}
 
 @ViewBuilder
 func appGlassCard<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {

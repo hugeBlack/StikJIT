@@ -78,6 +78,12 @@ struct HomeView: View {
 
     private var ddiMounted: Bool { isMounted() }
     private var canConnectByApp: Bool { pairingFileExists && ddiMounted }
+    private var pairingFileLikelyInvalid: Bool {
+        (pairingFileExists || pairingFilePresentOnDisk) &&
+        !isValidatingPairingFile &&
+        !ddiMounted &&
+        !heartbeatOK
+    }
 
     private let pairingFileURL = URL.documentsDirectory.appendingPathComponent("pairingFile.plist")
     
@@ -248,6 +254,12 @@ struct HomeView: View {
                                 autoScriptData = data
                                 autoScriptName = "script2.js"
                             }
+                        } else if appName == "Geode" {
+                            if let url = Bundle.main.url(forResource: "Geode", withExtension: "js"),
+                               let data = try? Data(contentsOf: url) {
+                                autoScriptData = data
+                                autoScriptName = "script2.js"
+                            }
                         } else if appName == "MeloNX" {
                             if let url = Bundle.main.url(forResource: "melo", withExtension: "js"),
                                let data = try? Data(contentsOf: url) {
@@ -397,7 +409,7 @@ struct HomeView: View {
                     }
                     .disabled(isProcessing || isValidatingPairingFile)
 
-                    if pairingFileExists && enableAdvancedOptions {
+                    if pairingFileExists && enableAdvancedOptions && !pairingFileLikelyInvalid {
                         Button(action: { showPIDSheet = true }) {
                             secondaryButtonLabel(icon: "number.circle", title: "Connect by PID")
                         }
@@ -428,7 +440,7 @@ struct HomeView: View {
                 return .init(
                     title: "Pairing file needs attention",
                     subtitle: "We found a pairing file but couldn’t read it.",
-                    icon: "doc.badge.exclamationmark",
+                    icon: "exclamationmark.triangle.fill",
                     tint: .yellow
                 )
             }
@@ -437,6 +449,14 @@ struct HomeView: View {
                 subtitle: "",
                 icon: "doc.badge.plus",
                 tint: .orange
+            )
+        }
+        if pairingFileLikelyInvalid {
+            return .init(
+                title: "Pairing file may be invalid",
+                subtitle: "We couldn’t reach your device. Create a new pairing file on your trusted computer, then try again.",
+                icon: "exclamationmark.triangle.fill",
+                tint: .yellow
             )
         }
         if !ddiMounted {
@@ -473,7 +493,8 @@ struct HomeView: View {
 
     private var primaryActionTitle: String {
         if isValidatingPairingFile { return "Validating…" }
-        if !pairingFileExists { return pairingFilePresentOnDisk ? "Re-import Pairing File" : "Import Pairing File" }
+        if !pairingFileExists { return pairingFilePresentOnDisk ? "Import New Pairing File" : "Import Pairing File" }
+        if pairingFileLikelyInvalid { return "Import New Pairing File" }
         if !ddiMounted { return "Mount Developer Disk Image" }
         return "Connect by App"
     }
@@ -481,6 +502,7 @@ struct HomeView: View {
     private var primaryActionIcon: String {
         if isValidatingPairingFile { return "hourglass" }
         if !pairingFileExists { return pairingFilePresentOnDisk ? "arrow.clockwise" : "doc.badge.plus" }
+        if pairingFileLikelyInvalid { return "arrow.clockwise" }
         if !ddiMounted { return "externaldrive" }
         return "cable.connector.horizontal"
     }
@@ -497,6 +519,14 @@ struct HomeView: View {
                 actionTitle: nil,
                 action: nil
             )
+        } else if pairingFileLikelyInvalid {
+            pairingItem = ChecklistItem(
+                title: "Pairing file",
+                subtitle: "We couldn’t reach your device. Create a new pairing file on your trusted computer.",
+                status: .attention,
+                actionTitle: "Import New",
+                action: { isShowingPairingFilePicker = true }
+            )
         } else if pairingFileExists {
             pairingItem = ChecklistItem(
                 title: "Pairing file",
@@ -508,9 +538,9 @@ struct HomeView: View {
         } else if pairingFilePresentOnDisk {
             pairingItem = ChecklistItem(
                 title: "Pairing file",
-                subtitle: "We couldn’t read the pairing file that’s on disk. Re-import it from your trusted computer.",
+                subtitle: "We couldn’t read the pairing file that’s on disk. Create a new pairing file on your trusted computer.",
                 status: .attention,
-                actionTitle: "Re-import",
+                actionTitle: "Import New",
                 action: { isShowingPairingFilePicker = true }
             )
         } else {
@@ -523,14 +553,23 @@ struct HomeView: View {
             )
         }
 
+        let hideOtherIndicators = pairingFileLikelyInvalid || (pairingFilePresentOnDisk && !pairingFileExists && !isValidatingPairingFile)
+        if hideOtherIndicators {
+            return [pairingItem]
+        }
+
         return [
             pairingItem,
             ChecklistItem(
                 title: "Developer Disk Image",
-                subtitle: ddiMounted ? "Mounted successfully." : "",
+                subtitle: ddiMounted
+                    ? "Mounted successfully."
+                    : (pairingFileLikelyInvalid
+                        ? "The Developer Disk Image can’t mount because the pairing file looks invalid. Create a new pairing file."
+                        : ""),
                 status: ddiMounted ? .ready : .attention,
-                actionTitle: nil,
-                action: nil
+                actionTitle: pairingFileLikelyInvalid ? "Import New" : nil,
+                action: pairingFileLikelyInvalid ? { isShowingPairingFilePicker = true } : nil
             ),
             ChecklistItem(
                 title: "VPN tunnel",
@@ -910,6 +949,10 @@ struct HomeView: View {
 
     private func primaryActionTapped() {
         guard !isValidatingPairingFile else { return }
+        if pairingFileLikelyInvalid {
+            isShowingPairingFilePicker = true
+            return
+        }
         if pairingFileExists {
             if !ddiMounted {
                 showAlert(title: "Device Not Mounted".localized, message: "The Developer Disk Image has not been mounted yet. Check in settings for more information.".localized, showOk: true) { _ in }

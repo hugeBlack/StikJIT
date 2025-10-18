@@ -41,10 +41,6 @@ struct MainTabView: View {
                     .tabItem { Label("Scripts", systemImage: "scroll") }
                     .tag(1)
                 
-                IPAAppManagerView()
-                    .tabItem { Label("Testing", systemImage: "square.grid.2x2.fill") }
-                    .tag(2)
-                
                 DeviceInfoView()
                     .tabItem { Label("Device Info", systemImage: "info.circle.fill") }
                     .tag(3)
