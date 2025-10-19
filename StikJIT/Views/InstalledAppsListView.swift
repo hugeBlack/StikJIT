@@ -15,7 +15,6 @@ import Combine
 struct InstalledAppsListView: View {
     @StateObject private var viewModel = InstalledAppsViewModel()
 
-    @State private var appIcons: [String: UIImage] = [:]
     private let sharedDefaults = UserDefaults(suiteName: "group.com.stik.sj")!
 
     @AppStorage("recentApps") private var recentApps: [String] = []
@@ -329,7 +328,6 @@ struct InstalledAppsListView: View {
                                 appName: viewModel.debuggableApps[bundleID] ?? bundleID,
                                 recentApps: $recentApps,
                                 favoriteApps: $favoriteApps,
-                                appIcons: $appIcons,
                                 onSelectApp: onSelectApp,
                                 sharedDefaults: sharedDefaults,
                                 performanceMode: performanceMode
@@ -348,7 +346,6 @@ struct InstalledAppsListView: View {
                                 appName: viewModel.debuggableApps[bundleID] ?? bundleID,
                                 recentApps: $recentApps,
                                 favoriteApps: $favoriteApps,
-                                appIcons: $appIcons,
                                 onSelectApp: onSelectApp,
                                 sharedDefaults: sharedDefaults,
                                 performanceMode: performanceMode
@@ -366,7 +363,6 @@ struct InstalledAppsListView: View {
                             appName: appName,
                             recentApps: $recentApps,
                             favoriteApps: $favoriteApps,
-                            appIcons: $appIcons,
                             onSelectApp: onSelectApp,
                             sharedDefaults: sharedDefaults,
                             performanceMode: performanceMode
@@ -402,7 +398,7 @@ struct InstalledAppsListView: View {
         guard !toPrefetch.isEmpty else { return }
 
         prefetchedBundleIDs.formUnion(toPrefetch)
-        IconCache.shared.prefetchIcons(for: toPrefetch)
+        AppIconRepository.prefetch(bundleIDs: toPrefetch)
     }
 
     private func launchSections(apps: [(key: String, value: String)]) -> some View {
@@ -414,7 +410,6 @@ struct InstalledAppsListView: View {
                         bundleID: bundleID,
                         appName: appName,
                         isLaunching: launchingBundles.contains(bundleID),
-                        appIcons: $appIcons,
                         performanceMode: performanceMode
                     ) {
                         startLaunching(bundleID: bundleID)
@@ -773,7 +768,6 @@ struct AppButton: View {
 
     @Binding var recentApps: [String]
     @Binding var favoriteApps: [String]
-    @Binding var appIcons: [String: UIImage]
 
     @AppStorage("loadAppIconsOnJIT") private var loadAppIconsOnJIT = true
     @AppStorage("enableAdvancedOptions") private var enableAdvancedOptions = false
@@ -785,8 +779,28 @@ struct AppButton: View {
     let performanceMode: Bool
 
     @State private var showScriptPicker = false
+    @StateObject private var iconLoader: IconLoader
 
     private var rowBackgroundStyle: BackgroundStyle { themeExpansion?.backgroundStyle(for: appThemeRaw) ?? AppTheme.system.backgroundStyle }
+
+    init(
+        bundleID: String,
+        appName: String,
+        recentApps: Binding<[String]>,
+        favoriteApps: Binding<[String]>,
+        onSelectApp: @escaping (String) -> Void,
+        sharedDefaults: UserDefaults,
+        performanceMode: Bool
+    ) {
+        self.bundleID = bundleID
+        self.appName = appName
+        self._recentApps = recentApps
+        self._favoriteApps = favoriteApps
+        self.onSelectApp = onSelectApp
+        self.sharedDefaults = sharedDefaults
+        self.performanceMode = performanceMode
+        _iconLoader = StateObject(wrappedValue: IconLoader(bundleID: bundleID))
+    }
 
     var body: some View {
         Button(action: selectApp) {
@@ -864,7 +878,12 @@ struct AppButton: View {
         }
         .onAppear {
             if loadAppIconsOnJIT {
-                loadAppIcon(for: bundleID)
+                iconLoader.beginLoading()
+            }
+        }
+        .onChange(of: loadAppIconsOnJIT) { _, newValue in
+            if newValue {
+                iconLoader.beginLoading()
             }
         }
         .accessibilityElement(children: .ignore)
@@ -876,7 +895,7 @@ struct AppButton: View {
 
     private var iconView: some View {
         Group {
-            if loadAppIconsOnJIT, let image = appIcons[bundleID] {
+            if loadAppIconsOnJIT, let image = iconLoader.image {
                 Image(uiImage: image)
                     .resizable()
                     .aspectRatio(contentMode: .fit)
@@ -954,32 +973,14 @@ struct AppButton: View {
         }
         if touched { WidgetCenter.shared.reloadAllTimelines() }
     }
-
-    private func loadAppIcon(for bundleID: String) {
-        guard loadAppIconsOnJIT else { return }
-        guard appIcons[bundleID] == nil else { return }
-        IconCache.shared.fetchIcon(for: bundleID, priority: .veryHigh) { image in
-            guard let image else { return }
-            let shouldAnimate = appIcons[bundleID] == nil
-            if shouldAnimate {
-                withAnimation(.linear(duration: 0.12)) {
-                    appIcons[bundleID] = image
-                }
-            } else {
-                appIcons[bundleID] = image
-            }
-        }
-    }
 }
 
-// MARK: - IconCache
+// MARK: - Launch Row
 
 struct LaunchAppRow: View {
     let bundleID: String
     let appName: String
     let isLaunching: Bool
-
-    @Binding var appIcons: [String: UIImage]
 
     @AppStorage("loadAppIconsOnJIT") private var loadAppIconsOnJIT = true
     @AppStorage("appTheme") private var appThemeRaw: String = AppTheme.system.rawValue
@@ -988,7 +989,24 @@ struct LaunchAppRow: View {
     let performanceMode: Bool
     var launchAction: () -> Void
 
+    @StateObject private var iconLoader: IconLoader
+
     private var rowBackgroundStyle: BackgroundStyle { themeExpansion?.backgroundStyle(for: appThemeRaw) ?? AppTheme.system.backgroundStyle }
+
+    init(
+        bundleID: String,
+        appName: String,
+        isLaunching: Bool,
+        performanceMode: Bool,
+        launchAction: @escaping () -> Void
+    ) {
+        self.bundleID = bundleID
+        self.appName = appName
+        self.isLaunching = isLaunching
+        self.performanceMode = performanceMode
+        self.launchAction = launchAction
+        _iconLoader = StateObject(wrappedValue: IconLoader(bundleID: bundleID))
+    }
 
     var body: some View {
         Button {
@@ -1037,7 +1055,12 @@ struct LaunchAppRow: View {
         .disabled(isLaunching)
         .onAppear {
             if loadAppIconsOnJIT {
-                loadAppIcon(for: bundleID)
+                iconLoader.beginLoading()
+            }
+        }
+        .onChange(of: loadAppIconsOnJIT) { _, newValue in
+            if newValue {
+                iconLoader.beginLoading()
             }
         }
         .accessibilityElement(children: .ignore)
@@ -1047,7 +1070,7 @@ struct LaunchAppRow: View {
 
     private var iconView: some View {
         Group {
-            if loadAppIconsOnJIT, let image = appIcons[bundleID] {
+            if loadAppIconsOnJIT, let image = iconLoader.image {
                 Image(uiImage: image)
                     .resizable()
                     .aspectRatio(contentMode: .fit)
@@ -1071,22 +1094,6 @@ struct LaunchAppRow: View {
 
     private var rowBackground: some View {
         ThemedRowBackground(performanceMode: performanceMode, style: rowBackgroundStyle, cornerRadius: 16)
-    }
-
-    private func loadAppIcon(for bundleID: String) {
-        guard loadAppIconsOnJIT else { return }
-        guard appIcons[bundleID] == nil else { return }
-        IconCache.shared.fetchIcon(for: bundleID, priority: .veryHigh) { image in
-            guard let image else { return }
-            let shouldAnimate = appIcons[bundleID] == nil
-            if shouldAnimate {
-                withAnimation(.linear(duration: 0.12)) {
-                    appIcons[bundleID] = image
-                }
-            } else {
-                appIcons[bundleID] = image
-            }
-        }
     }
 }
 
@@ -1171,130 +1178,238 @@ private struct ThemedRowBackground: View {
     }
 }
 
-final class IconCache {
-    static let shared = IconCache()
+private actor IconFetchRegistry {
+    private var tasks: [String: Task<UIImage?, Never>] = [:]
 
-    private let mem = NSCache<NSString, UIImage>()
-    private let queue = OperationQueue()
-    private let callbackQueue = DispatchQueue(label: "com.stik.iconcache.callbacks")
-    private var pendingCallbacks: [String: [(UIImage?) -> Void]] = [:]
-    private var pendingOperations: [String: Operation] = [:]
-
-    private init() {
-        queue.maxConcurrentOperationCount = 4
-        queue.qualityOfService = .userInitiated
-        mem.countLimit = 1000
-        mem.totalCostLimit = 64 * 1024 * 1024
+    func task(for bundleID: String, create: () -> Task<UIImage?, Never>) -> Task<UIImage?, Never> {
+        if let existing = tasks[bundleID] {
+            return existing
+        }
+        let task = create()
+        tasks[bundleID] = task
+        return task
     }
 
-    func fetchIcon(
-        for bundleID: String,
-        priority: Operation.QueuePriority = .normal,
-        completion: @escaping (UIImage?) -> Void
-    ) {
-        if let memImage = mem.object(forKey: bundleID as NSString) {
-            DispatchQueue.main.async { completion(memImage) }
+    func clear(bundleID: String) {
+        tasks[bundleID] = nil
+    }
+}
+
+private actor AsyncSemaphore {
+    private var permits: Int
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    init(permits: Int) {
+        self.permits = permits
+    }
+
+    func acquire() async {
+        if permits > 0 {
+            permits -= 1
             return
         }
-
-        var shouldStartLoad = false
-        callbackQueue.sync {
-            if var existing = pendingCallbacks[bundleID] {
-                existing.append(completion)
-                pendingCallbacks[bundleID] = existing
-                if let op = pendingOperations[bundleID], op.queuePriority.rawValue < priority.rawValue {
-                    op.queuePriority = priority
-                }
-            } else {
-                pendingCallbacks[bundleID] = [completion]
-                shouldStartLoad = true
-            }
-        }
-
-        guard shouldStartLoad else { return }
-
-        let operation = BlockOperation { [weak self] in
-            guard let self else { return }
-
-            var loadedFromDisk = false
-            var result = self.diskCachedIcon(for: bundleID)
-            if result != nil {
-                loadedFromDisk = true
-            }
-
-            if result == nil {
-                let semaphore = DispatchSemaphore(value: 0)
-                AppStoreIconFetcher.getIcon(for: bundleID) { image in
-                    result = image
-                    semaphore.signal()
-                }
-                _ = semaphore.wait(timeout: .now() + 10)
-            }
-
-            if let image = result {
-                let prepared = self.prepareForDisplay(image)
-                let cost = Int(prepared.size.width * prepared.size.height * prepared.scale * prepared.scale)
-                self.mem.setObject(prepared, forKey: bundleID as NSString, cost: cost)
-                if !loadedFromDisk {
-                    saveIconToGroup(prepared, bundleID: bundleID)
-                }
-                result = prepared
-            }
-
-            let callbacks = self.callbackQueue.sync { () -> [(UIImage?) -> Void] in
-                let handlers = self.pendingCallbacks[bundleID] ?? []
-                self.pendingCallbacks[bundleID] = nil
-                self.pendingOperations[bundleID] = nil
-                return handlers
-            }
-
-            DispatchQueue.main.async {
-                callbacks.forEach { $0(result) }
-            }
-        }
-        operation.queuePriority = priority
-
-        callbackQueue.sync {
-            pendingOperations[bundleID] = operation
-        }
-
-        queue.addOperation(operation)
-    }
-
-    func prefetchIcons(for bundleIDs: [String]) {
-        let uniqueIDs = Set(bundleIDs)
-        for bundleID in uniqueIDs {
-            fetchIcon(for: bundleID, priority: .veryLow) { _ in }
+        await withCheckedContinuation { continuation in
+            waiters.append(continuation)
         }
     }
 
-    private func diskCachedIcon(for bundleID: String) -> UIImage? {
-        guard let containerURL = FileManager.default
-            .containerURL(forSecurityApplicationGroupIdentifier: "group.com.stik.sj")
-        else { return nil }
+    func release() {
+        if let next = waiters.first {
+            waiters.removeFirst()
+            next.resume()
+        } else {
+            permits += 1
+        }
+    }
+}
 
-        let iconsDir = containerURL.appendingPathComponent("icons", isDirectory: true)
-        let fileURL = iconsDir.appendingPathComponent("\(bundleID).png")
-        guard FileManager.default.fileExists(atPath: fileURL.path) else { return nil }
+enum AppIconRepository {
+    private static let memory: NSCache<NSString, UIImage> = {
+        let cache = NSCache<NSString, UIImage>()
+        cache.countLimit = 2000
+        cache.totalCostLimit = 64 * 1024 * 1024
+        return cache
+    }()
 
-        guard let data = try? Data(contentsOf: fileURL) else {
-            try? FileManager.default.removeItem(at: fileURL)
+    private static let diskQueue = DispatchQueue(label: "com.stik.iconcache.disk", qos: .utility)
+    private static let fetchSemaphore = AsyncSemaphore(permits: 4)
+    private static let registry = IconFetchRegistry()
+    private static let appGroupIdentifier = "group.com.stik.sj"
+
+    static func cachedImage(for bundleID: String) -> UIImage? {
+        memory.object(forKey: bundleID as NSString)
+    }
+
+    static func image(for bundleID: String) async -> UIImage? {
+        if let mem = cachedImage(for: bundleID) {
+            return mem
+        }
+
+        if let disk = await loadFromDisk(bundleID: bundleID) {
+            storeInMemory(disk, for: bundleID)
+            return disk
+        }
+
+        return await fetchAndStore(bundleID: bundleID)
+    }
+
+    static func prefetch(bundleIDs: [String]) {
+        let unique = Set(bundleIDs)
+        for bundleID in unique {
+            Task.detached(priority: .utility) {
+                _ = await image(for: bundleID)
+            }
+        }
+    }
+
+    static func removeFromCache(bundleIDs: [String]) {
+        guard !bundleIDs.isEmpty else { return }
+        for id in bundleIDs {
+            memory.removeObject(forKey: id as NSString)
+        }
+        diskQueue.async {
+            for id in bundleIDs {
+                guard let url = iconURL(for: id) else { continue }
+                try? FileManager.default.removeItem(at: url)
+            }
+        }
+    }
+
+    private static func fetchAndStore(bundleID: String) async -> UIImage? {
+        let task = await registry.task(for: bundleID) {
+            Task.detached(priority: .utility) {
+                await fetchSemaphore.acquire()
+
+                let result: UIImage?
+                if let fetched = await fetchFromSource(bundleID: bundleID) {
+                    let prepared = prepareForDisplay(fetched)
+                    store(prepared, for: bundleID)
+                    result = prepared
+                } else {
+                    result = nil
+                }
+
+                await fetchSemaphore.release()
+                await registry.clear(bundleID: bundleID)
+                return result
+            }
+        }
+        return await task.value
+    }
+
+    private static func fetchFromSource(bundleID: String) async -> UIImage? {
+        await withCheckedContinuation { continuation in
+            AppStoreIconFetcher.getIcon(for: bundleID) { image in
+                continuation.resume(returning: image)
+            }
+        }
+    }
+
+    private static func loadFromDisk(bundleID: String) async -> UIImage? {
+        await withCheckedContinuation { continuation in
+            diskQueue.async {
+                guard let url = iconURL(for: bundleID),
+                      FileManager.default.fileExists(atPath: url.path) else {
+                    continuation.resume(returning: nil)
+                    return
+                }
+                guard let data = try? Data(contentsOf: url) else {
+                    try? FileManager.default.removeItem(at: url)
+                    continuation.resume(returning: nil)
+                    return
+                }
+                guard let image = UIImage(data: data, scale: UIScreen.main.scale) else {
+                    try? FileManager.default.removeItem(at: url)
+                    continuation.resume(returning: nil)
+                    return
+                }
+                continuation.resume(returning: prepareForDisplay(image))
+            }
+        }
+    }
+
+    private static func store(_ image: UIImage, for bundleID: String) {
+        storeInMemory(image, for: bundleID)
+        storeOnDisk(image, bundleID: bundleID)
+    }
+
+    private static func storeInMemory(_ image: UIImage, for bundleID: String) {
+        memory.setObject(image, forKey: bundleID as NSString, cost: memoryCost(for: image))
+    }
+
+    private static func storeOnDisk(_ image: UIImage, bundleID: String) {
+        diskQueue.async {
+            guard let url = iconURL(for: bundleID),
+                  let data = image.pngData() else { return }
+            do {
+                try data.write(to: url, options: .atomic)
+            } catch {
+                // Best-effort cache write.
+            }
+        }
+    }
+
+    private static func iconURL(for bundleID: String) -> URL? {
+        guard let container = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupIdentifier) else {
             return nil
         }
-
-        if let image = UIImage(data: data, scale: UIScreen.main.scale) {
-            return image
+        let directory = container.appendingPathComponent("icons", isDirectory: true)
+        do {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        } catch {
+            return nil
         }
-
-        try? FileManager.default.removeItem(at: fileURL)
-        return nil
+        return directory.appendingPathComponent("\(bundleID).png")
     }
 
-    private func prepareForDisplay(_ image: UIImage) -> UIImage {
+    private static func memoryCost(for image: UIImage) -> Int {
+        let width = Int(image.size.width * image.scale)
+        let height = Int(image.size.height * image.scale)
+        return max(width * height * 4, 1)
+    }
+
+    private static func prepareForDisplay(_ image: UIImage) -> UIImage {
         if #available(iOS 15.0, *) {
             return image.preparingForDisplay() ?? image
         }
         return image
+    }
+}
+
+@MainActor
+final class IconLoader: ObservableObject {
+    @Published private(set) var image: UIImage?
+
+    private let bundleID: String
+    private var didStart = false
+
+    init(bundleID: String) {
+        self.bundleID = bundleID
+        if let cached = AppIconRepository.cachedImage(for: bundleID) {
+            image = cached
+            didStart = true
+        }
+    }
+
+    func beginLoading() {
+        if image != nil {
+            didStart = true
+            return
+        }
+        guard !didStart else { return }
+        didStart = true
+
+        let targetID = bundleID
+        Task { [weak self] in
+            if let resolved = await AppIconRepository.image(for: targetID) {
+                guard let self else { return }
+                withAnimation(.linear(duration: 0.12)) {
+                    self.image = resolved
+                }
+            } else {
+                self?.didStart = false
+            }
+        }
     }
 }
 
@@ -1336,17 +1451,6 @@ private extension View {
     ) -> some View {
         modifier(GlassCard(cornerRadius: cornerRadius, material: material, strokeOpacity: strokeOpacity))
     }
-}
-
-fileprivate func saveIconToGroup(_ image: UIImage, bundleID: String) {
-    guard let data = image.pngData(),
-          let container = FileManager.default
-            .containerURL(forSecurityApplicationGroupIdentifier: "group.com.stik.sj")
-    else { return }
-    let iconsDir = container.appendingPathComponent("icons", isDirectory: true)
-    try? FileManager.default.createDirectory(at: iconsDir, withIntermediateDirectories: true)
-    let fileURL = iconsDir.appendingPathComponent("\(bundleID).png")
-    try? data.write(to: fileURL)
 }
 
 enum Haptics {
@@ -1459,4 +1563,3 @@ class InstalledAppsViewModel: ObservableObject {
         }
     }
 }
-
