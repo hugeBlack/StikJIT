@@ -7,9 +7,22 @@
   },
   "groups" : [
     {
-      "blur-material" : 0.5,
+      "blur-material-specializations" : [
+        {
+          "value" : 0.5
+        },
+        {
+          "appearance" : "tinted",
+          "value" : 0.25
+        }
+      ],
       "layers" : [
         {
+          "image-name" : "1Bolt 2.svg",
+          "name" : "1Bolt 2"
+        },
+        {
+          "hidden" : true,
           "image-name" : "1Bolt.svg",
           "name" : "1Bolt"
         }
@@ -18,17 +31,29 @@
         "kind" : "neutral",
         "opacity" : 0.5
       },
-      "translucency" : {
-        "enabled" : true,
-        "value" : 0.7
-      }
+      "translucency-specializations" : [
+        {
+          "value" : {
+            "enabled" : true,
+            "value" : 0.5
+          }
+        },
+        {
+          "appearance" : "tinted",
+          "value" : {
+            "enabled" : true,
+            "value" : 0.7
+          }
+        }
+      ]
     },
     {
       "layers" : [
         {
           "fill" : {
-            "solid" : "extended-gray:1.00000,0.20000"
+            "solid" : "extended-gray:1.00000,0.30000"
           },
+          "glass" : false,
           "image-name" : "2Grid.svg",
           "name" : "2Grid"
         }
@@ -37,8 +62,9 @@
         "kind" : "neutral",
         "opacity" : 0.5
       },
+      "specular" : false,
       "translucency" : {
-        "enabled" : true,
+        "enabled" : false,
         "value" : 0.5
       }
     }
