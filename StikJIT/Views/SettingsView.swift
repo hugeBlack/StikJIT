@@ -383,6 +383,17 @@ struct SettingsView: View {
                     }
                     .padding(.vertical, 8)
                 }
+                Button(action: { redownloadDDIPressed() }) {
+                    HStack {
+                        Image(systemName: "arrow.down.circle")
+                            .font(.system(size: 18))
+                            .foregroundColor(.primary.opacity(0.8))
+                        Text("Redownload DDI")
+                            .foregroundColor(.primary.opacity(0.8))
+                        Spacer()
+                    }
+                    .padding(.vertical, 8)
+                }
             }
         }
     }
@@ -514,6 +525,10 @@ struct SettingsView: View {
                 }
             }
         }
+    }
+
+    private func redownloadDDIPressed() {
+        redownloadDDI()
     }
 }
 

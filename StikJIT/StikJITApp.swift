@@ -1102,3 +1102,47 @@ func downloadFile(from urlString: String, to destinationURL: URL, completion: @e
     task.resume()
     completion("")
 }
+
+func redownloadDDI() {
+    let fileManager = FileManager.default
+    let ddiFiles = [
+        "DDI/BuildManifest.plist",
+        "DDI/Image.dmg",
+        "DDI/Image.dmg.trustcache"
+    ]
+
+    for file in ddiFiles {
+        let fileURL = URL.documentsDirectory.appendingPathComponent(file)
+        if fileManager.fileExists(atPath: fileURL.path) {
+            do {
+                try fileManager.removeItem(at: fileURL)
+                print("Deleted \(file)")
+            } catch {
+                print("Error deleting \(file): \(error)")
+            }
+        }
+    }
+
+    let urls = [
+        "https://github.com/doronz88/DeveloperDiskImage/raw/refs/heads/main/PersonalizedImages/Xcode_iOS_DDI_Personalized/BuildManifest.plist",
+        "https://github.com/doronz88/DeveloperDiskImage/raw/refs/heads/main/PersonalizedImages/Xcode_iOS_DDI_Personalized/Image.dmg",
+        "https://github.com/doronz88/DeveloperDiskImage/raw/refs/heads/main/PersonalizedImages/Xcode_iOS_DDI_Personalized/Image.dmg.trustcache"
+    ]
+
+    let group = DispatchGroup()
+
+    for (index, urlString) in urls.enumerated() {
+        let destinationURL = URL.documentsDirectory.appendingPathComponent(ddiFiles[index])
+        group.enter()
+        downloadFile(from: urlString, to: destinationURL) { result in
+            if (result != "") {
+                showAlert(title: "An Error has Occurred", message: "[Download DDI Error]: " + result, showOk: true)
+            }
+            group.leave()
+        }
+    }
+
+    group.notify(queue: .main) {
+        showAlert(title: "Success", message: "DDI files have been redownloaded.", showOk: true)
+    }
+}
