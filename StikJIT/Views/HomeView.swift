@@ -10,6 +10,8 @@ import UniformTypeIdentifiers
 import Pipify
 import UIKit
 import WidgetKit
+import Combine
+import Network
 
 struct JITEnableConfiguration {
     var bundleID: String? = nil
@@ -57,15 +59,23 @@ struct HomeView: View {
     @State var jsModel: RunJSViewModel?
     
     @StateObject private var tunnel = TunnelManager.shared
+    @ObservedObject private var mounting = MountingProgress.shared
     @State private var heartbeatOK = false
     @State private var cachedAppNames: [String: String] = [:]
-    @State private var isLoadingQuickApps = false
     @AppStorage("pinnedSystemApps") private var pinnedSystemApps: [String] = []
     @AppStorage("pinnedSystemAppNames") private var pinnedSystemAppNames: [String: String] = [:]
     @State private var launchingSystemApps: Set<String> = []
     @State private var systemLaunchMessage: String? = nil
-
-    @AppStorage("showiOS26Disclaimer") private var showiOS26Disclaimer: Bool = true
+    @State private var isRemountingDDI = false
+    @State private var connectionCheckState: ConnectionCheckState = .idle
+    @State private var connectionInfoMessage: String? = nil
+    @State private var hasAutoStartedConnectionCheck = false
+    @State private var connectionTimeoutTask: DispatchWorkItem? = nil
+    @State private var statusInfoType: StatusLightType? = nil
+    @State private var wifiConnected = false
+    @State private var wifiMonitor: NWPathMonitor? = nil
+    @AppStorage("cachedAppNamesData") private var cachedAppNamesData: Data?
+    @AppStorage("autoStartVPN") private var autoStartVPN = true
 
     @AppStorage("appTheme") private var appThemeRaw: String = AppTheme.system.rawValue
     @Environment(\.themeExpansionManager) private var themeExpansion
@@ -86,11 +96,6 @@ struct HomeView: View {
     }
 
     private let pairingFileURL = URL.documentsDirectory.appendingPathComponent("pairingFile.plist")
-    
-    private var isOnOrAfteriOS26: Bool {
-        let v = ProcessInfo.processInfo.operatingSystemVersion
-        return v.majorVersion >= 26
-    }
 
     var body: some View {
         NavigationStack {
@@ -100,12 +105,8 @@ struct HomeView: View {
                 
                 ScrollView {
                     VStack(spacing: 20) {
-                        if isOnOrAfteriOS26 || showiOS26Disclaimer {
-                            disclaimerCard
-                                .transition(.opacity.combined(with: .move(edge: .top)))
-                        }
-
-                        readinessCard
+                        setupCard
+                        connectCard
                        // if pairingFileExists {
                     //        quickConnectCard
                       //  }
@@ -148,25 +149,49 @@ struct HomeView: View {
         }
         .preferredColorScheme(preferredScheme)
         .onAppear {
+            restoreCachedAppNamesIfAvailable()
             checkPairingFileExists()
             refreshBackground()
             loadAppListIfNeeded()
+            startWiFiMonitoring()
+            if autoStartVPN && tunnel.tunnelStatus == .disconnected {
+                TunnelManager.shared.startVPN()
+            }
+            if !hasAutoStartedConnectionCheck {
+                hasAutoStartedConnectionCheck = true
+                runConnectionDiagnostics(autoStart: true)
+            }
             NotificationCenter.default.addObserver(
                 forName: NSNotification.Name("ShowPairingFilePicker"),
                 object: nil,
                 queue: .main
             ) { _ in isShowingPairingFilePicker = true }
         }
+        .onDisappear {
+            connectionTimeoutTask?.cancel()
+            connectionTimeoutTask = nil
+            stopWiFiMonitoring()
+            hasAutoStartedConnectionCheck = false
+        }
         .onReceive(timer) { _ in
             refreshBackground()
             checkPairingFileExists()
             heartbeatOK = pubHeartBeat
         }
+        .onReceive(mounting.$mountingThread.receive(on: RunLoop.main)) { thread in
+            isRemountingDDI = thread != nil
+        }
         .onChange(of: pairingFileExists) { _, newValue in
             if newValue {
                 loadAppListIfNeeded(force: cachedAppNames.isEmpty)
+                runConnectionDiagnostics()
             } else {
                 cachedAppNames = [:]
+            }
+        }
+        .onChange(of: tunnel.tunnelStatus) { _, newStatus in
+            if newStatus == .connected {
+                runConnectionDiagnostics()
             }
         }
         .onChange(of: favoriteApps) { _, _ in
@@ -369,52 +394,39 @@ struct HomeView: View {
     
     // MARK: - Styled Sections
     
-    private var readinessCard: some View {
+    private var setupCard: some View {
         homeCard {
             VStack(alignment: .leading, spacing: 16) {
-                let summary = readinessSummary
-
-                HStack(alignment: .top, spacing: 12) {
-                    StatusGlyph(icon: summary.icon, tint: summary.tint)
-
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Welcome, \(username)")
-                            .font(.system(.title2, design: .rounded).weight(.bold))
-                            .foregroundStyle(.primary)
-
-                        Text(summary.title)
-                            .font(.headline.weight(.semibold))
-                            .foregroundStyle(summary.tint)
-
-                        Text(summary.subtitle)
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
+                HStack {
+                    Text("Setup")
+                        .font(.headline.weight(.semibold))
+                    Spacer()
+                    connectionStatusBadge
                 }
 
-                VStack(alignment: .leading, spacing: 12) {
-                    ForEach(readinessChecklist) { item in
-                        ChecklistRow(item: item, accentColor: accentColor)
-                    }
-                }
+                statusLightsRow
 
-                VStack(spacing: 10) {
-                    Button(action: primaryActionTapped) {
-                        whiteCardButtonLabel(
-                            icon: primaryActionIcon,
-                            title: primaryActionTitle,
-                            isLoading: isProcessing || isValidatingPairingFile
-                        )
-                    }
-                    .disabled(isProcessing || isValidatingPairingFile)
+                vpnControls
+                
+                ddiControls
 
-                    if pairingFileExists && enableAdvancedOptions && !pairingFileLikelyInvalid && primaryActionTitle == "Connect by App" {
-                        Button(action: { showPIDSheet = true }) {
-                            secondaryButtonLabel(icon: "number.circle", title: "Connect by PID")
-                        }
-                        .disabled(isProcessing)
-                    }
+            }
+        }
+    }
+
+    private var connectCard: some View {
+        homeCard {
+            VStack(alignment: .leading, spacing: 16) {
+                Text("Connect")
+                    .font(.headline.weight(.semibold))
+                    .foregroundStyle(.primary)
+
+                primaryActionControls
+
+                if let info = connectionInfoMessage, !info.isEmpty {
+                    Text(info)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
 
                 if isImportingFile {
@@ -426,69 +438,424 @@ struct HomeView: View {
         }
     }
 
-    private var readinessSummary: ReadinessSummary {
-        if isValidatingPairingFile {
-            return .init(
-                title: "Validating pairing file",
-                subtitle: "Hang tight while we verify the pairing file from your trusted computer.",
-                icon: "hourglass.circle.fill",
-                tint: .orange
-            )
+    // MARK: - Connection Setup Helpers
+
+    @ViewBuilder
+    private var connectionStatusBadge: some View {
+        if isConnectionCheckRunning {
+            statusBadge(icon: "clock.arrow.circlepath", text: "Checking…", color: .orange)
+        } else if allStatusIndicatorsGreen {
+            statusBadge(icon: "checkmark.circle.fill", text: "Ready", color: .green)
+        } else if connectionHasError {
+            statusBadge(icon: "exclamationmark.triangle.fill", text: "Needs attention", color: .yellow)
+        } else {
+            statusBadge(icon: "circle.lefthalf.filled", text: "Not ready", color: .yellow)
         }
-        if !pairingFileExists {
-            if pairingFilePresentOnDisk {
-                return .init(
-                    title: "Pairing file needs attention",
-                    subtitle: "We found a pairing file but couldn’t read it.",
-                    icon: "exclamationmark.triangle.fill",
-                    tint: .yellow
-                )
-            }
-            return .init(
-                title: "Import your pairing file",
-                subtitle: "",
-                icon: "doc.badge.plus",
-                tint: .orange
+    }
+
+    private func statusBadge(icon: String, text: String, color: Color) -> some View {
+        Label(text, systemImage: icon)
+            .font(.footnote.weight(.semibold))
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(
+                Capsule(style: .continuous)
+                    .fill(color.opacity(0.15))
             )
+            .foregroundStyle(color)
+    }
+
+    private var allStatusIndicatorsGreen: Bool {
+        pairingIndicatorStatus == .success &&
+        wifiIndicatorStatus == .success &&
+        heartbeatIndicatorStatus == .success
+    }
+
+    private var connectionHasError: Bool {
+        if case .failure = connectionCheckState { return true }
+        if case .timeout = connectionCheckState { return true }
+        return false
+    }
+
+    private var statusLightsRow: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 12) {
+                ForEach(statusLights) { light in
+                    Button {
+                        handleStatusTap(light.type)
+                    } label: {
+                        StatusLightView(light: light)
+                            .overlay(
+                                Circle()
+                                    .strokeBorder(statusInfoType == light.type ? accentColor : .clear, lineWidth: 1.5)
+                            )
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+
+            if let info = statusInfoText {
+                Text(info)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .transition(.opacity)
+            }
+        }
+        .animation(.easeInOut(duration: 0.2), value: statusInfoType)
+    }
+
+    private var statusLights: [StatusLightData] {
+        [
+            StatusLightData(type: .pairing, icon: "doc.badge.plus", color: color(for: pairingIndicatorStatus), label: pairingLightLabel),
+            StatusLightData(type: .wifi, icon: "wifi", color: color(for: wifiIndicatorStatus), label: "Wi-Fi status"),
+            StatusLightData(type: .heartbeat, icon: "waveform.path.ecg", color: color(for: heartbeatIndicatorStatus), label: "Heartbeat status")
+        ]
+    }
+
+    private var pairingLightLabel: String {
+        if isValidatingPairingFile { return "Validating pairing file" }
+        if pairingFileExists { return "Pairing file ready" }
+        if pairingFilePresentOnDisk { return "Pairing file unreadable" }
+        return "Pairing file missing"
+    }
+
+    private func color(for indicator: StartupIndicatorStatus) -> Color {
+        indicator.tint
+    }
+
+    private func startWiFiMonitoring() {
+        guard wifiMonitor == nil else { return }
+        let monitor = NWPathMonitor(requiredInterfaceType: .wifi)
+        wifiMonitor = monitor
+        monitor.pathUpdateHandler = { path in
+            DispatchQueue.main.async {
+                wifiConnected = path.status == .satisfied
+            }
+        }
+        monitor.start(queue: DispatchQueue.global(qos: .utility))
+    }
+
+    private func stopWiFiMonitoring() {
+        wifiMonitor?.cancel()
+        wifiMonitor = nil
+    }
+
+    private var statusInfoText: String? {
+        guard let type = statusInfoType else { return nil }
+        switch type {
+        case .pairing:
+            return pairingStatusDescription
+        case .wifi:
+            return wifiStatusDescription
+        case .heartbeat:
+            return heartbeatSubtitle
+        }
+    }
+
+    private var pairingStatusDescription: String {
+        if isValidatingPairingFile { return "Validating pairing file…" }
+        if pairingFileExists {
+            return "Pairing file imported and ready."
+        }
+        if pairingFilePresentOnDisk {
+            return "We found a pairing file on disk but couldn’t read it. Import a new one."
+        }
+        return "Import the pairing file generated from your trusted computer."
+    }
+
+    private var wifiStatusDescription: String {
+        if isConnectionCheckRunning { return "Checking Wi-Fi status…" }
+        return wifiConnected ? "Wi-Fi connected and ready." : "Connect to Wi-Fi on the same network as your trusted computer."
+    }
+
+    private var isConnectionCheckRunning: Bool {
+        if case .running = connectionCheckState { return true }
+        return false
+    }
+
+    private var vpnStatusSubtitle: String {
+        if isConnectionCheckRunning {
+            return "Checking the VPN/loopback tunnel…"
+        }
+        switch tunnel.tunnelStatus {
+        case .connected:
+            return "VPN is connected; loopback traffic is ready."
+        case .connecting:
+            return "Connecting… allow the VPN prompt if it appears."
+        case .disconnecting:
+            return "Disconnecting from the VPN."
+        case .disconnected:
+            return "VPN is off. Connect before running diagnostics."
+        case .error:
+            return "VPN configuration error. Try reconnecting."
+        }
+    }
+
+    private func handleStatusTap(_ type: StatusLightType) {
+        if statusInfoType == type {
+            statusInfoType = nil
+        } else {
+            statusInfoType = type
+        }
+    }
+
+    private var vpnIndicatorStatus: StartupIndicatorStatus {
+        if isConnectionCheckRunning { return .running }
+        switch tunnel.tunnelStatus {
+        case .connected:
+            return .success
+        case .connecting, .disconnecting:
+            return .running
+        case .disconnected:
+            return pairingFileExists ? .warning : .idle
+        case .error:
+            return .error
+        }
+    }
+
+    private var wifiIndicatorStatus: StartupIndicatorStatus {
+        if isConnectionCheckRunning { return .running }
+        return wifiConnected ? .success : .warning
+    }
+
+    private var pairingIndicatorStatus: StartupIndicatorStatus {
+        if isValidatingPairingFile { return .running }
+        if pairingFileExists { return .success }
+        if pairingFilePresentOnDisk || pairingFileLikelyInvalid { return .warning }
+        return .error
+    }
+
+    private var heartbeatSubtitle: String {
+        if heartbeatOK {
+            return "Heartbeat is responding."
         }
         if pairingFileLikelyInvalid {
-            return .init(
-                title: "Pairing file may be invalid",
-                subtitle: "We couldn’t reach your device. Create a new pairing file on your trusted computer, then try again.",
-                icon: "exclamationmark.triangle.fill",
-                tint: .yellow
-            )
+            return "Heartbeat is blocked because the pairing file looks invalid."
         }
-        if !ddiMounted {
-            return .init(
-                title: "Mount the Developer Disk Image",
-                subtitle: "Connect to Wi-Fi and force-restart StikDebug.",
-                icon: "externaldrive.badge.exclamationmark",
-                tint: .yellow
-            )
+        if !pairingFileExists {
+            return "Import a pairing file to start the heartbeat."
         }
-        if tunnel.tunnelStatus != .connected {
-            return .init(
-                title: "Connect the VPN",
-                subtitle: "Tap Allow when iOS prompts you, then flip the toggle in Settings if needed.",
-                icon: "lock.slash",
-                tint: .orange
-            )
+        if case .running = connectionCheckState {
+            return "Waiting for the connection check to finish."
         }
-        if !heartbeatOK {
-            return .init(
-                title: "Waiting for heartbeat",
-                subtitle: "StikDebug is reaching out to your device. We’ll connect automatically once it responds.",
-                icon: "waveform.path.ecg",
-                tint: .orange
-            )
+        if case .success = connectionCheckState {
+            return "We’ll start heartbeat automatically—leave the app open."
         }
-        return .init(
-            title: "Ready when you are",
-            subtitle: "Everything is ready. Select an app to start debugging in seconds.",
-            icon: "bolt.horizontal.circle.fill",
-            tint: .green
+        return "Heartbeat runs after the connection check completes."
+    }
+
+    private var heartbeatIndicatorStatus: StartupIndicatorStatus {
+        if heartbeatOK { return .success }
+        if pairingFileLikelyInvalid { return .warning }
+        if !pairingFileExists { return .idle }
+        if case .running = connectionCheckState { return .running }
+        if case .success = connectionCheckState { return .warning }
+        return .idle
+    }
+
+    private var connectionCheckButtonLabel: some View {
+        compactControlButton(
+            icon: "waveform.path.ecg",
+            title: isConnectionCheckRunning ? "Checking…" : "Run Check",
+            showSpinner: isConnectionCheckRunning
         )
+    }
+
+    private var primaryActionControls: some View {
+        VStack(spacing: 8) {
+            Button(action: primaryActionTapped) {
+                whiteCardButtonLabel(
+                    icon: primaryActionIcon,
+                    title: primaryActionTitle,
+                    isLoading: isProcessing || isValidatingPairingFile
+                )
+            }
+            .disabled(isProcessing || isValidatingPairingFile)
+
+            if pairingFileExists && enableAdvancedOptions && !pairingFileLikelyInvalid && primaryActionTitle == "Connect by App" {
+                Button(action: { showPIDSheet = true }) {
+                    secondaryButtonLabel(icon: "number.circle", title: "Connect by PID")
+                }
+                .disabled(isProcessing)
+            }
+        }
+    }
+
+    private var vpnControls: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("VPN Tunnel")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.primary)
+                Spacer()
+                statusBadge(icon: "shield.lefthalf.filled", text: tunnel.tunnelStatus.rawValue, color: vpnStatusColor)
+            }
+
+            Text(vpnStatusSubtitle)
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+
+            HStack(spacing: 8) {
+                Button(action: { TunnelManager.shared.startVPN() }) {
+                    compactControlButton(icon: "lock.open", title: "Connect")
+                }
+                .buttonStyle(.plain)
+                .disabled(!canStartVPN)
+
+                Button(action: { TunnelManager.shared.stopVPN() }) {
+                    compactControlButton(icon: "lock.fill", title: "Disconnect")
+                }
+                .buttonStyle(.plain)
+                .disabled(!canStopVPN)
+            }
+
+            Button {
+                autoStartVPN.toggle()
+                if autoStartVPN && tunnel.tunnelStatus == .disconnected {
+                    TunnelManager.shared.startVPN()
+                }
+            } label: {
+                compactControlButton(
+                    icon: autoStartVPN ? "lock.circle" : "lock.slash",
+                    title: autoStartVPN ? "Disable Auto VPN" : "Enable Auto VPN"
+                )
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    private var ddiControls: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("Developer Disk Image")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.primary)
+                Spacer()
+                statusBadge(
+                    icon: ddiMounted ? "externaldrive.fill.badge.checkmark" : "externaldrive.badge.exclamationmark",
+                    text: ddiMounted ? "Mounted" : "Not Mounted",
+                    color: ddiStatusColor
+                )
+            }
+
+            Text(ddiStatusDescription)
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+
+            Button(action: remountDeveloperDiskImage) {
+                compactControlButton(
+                    icon: "externaldrive.badge.plus",
+                    title: isRemountingDDI ? "Remounting…" : "Remount DDI",
+                    showSpinner: isRemountingDDI
+                )
+            }
+            .buttonStyle(.plain)
+            .disabled(!pairingFileExists || isRemountingDDI)
+
+            if isRemountingDDI {
+                ProgressView(value: min(max(mounting.mountProgress / 100, 0), 1))
+                    .progressViewStyle(.linear)
+                    .tint(accentColor)
+            }
+        }
+    }
+
+    private var vpnStatusColor: Color {
+        switch tunnel.tunnelStatus {
+        case .connected: return .green
+        case .connecting, .disconnecting: return .orange
+        case .error: return .red
+        case .disconnected: return .yellow
+        }
+    }
+
+    private var canStartVPN: Bool {
+        switch tunnel.tunnelStatus {
+        case .disconnected, .error:
+            return true
+        default:
+            return false
+        }
+    }
+
+    private var canStopVPN: Bool {
+        switch tunnel.tunnelStatus {
+        case .connected, .connecting, .disconnecting:
+            return true
+        default:
+            return false
+        }
+    }
+
+    private var ddiStatusDescription: String {
+        if ddiMounted {
+            return "Mounted successfully and ready for debugging."
+        }
+        if pairingFileLikelyInvalid {
+            return "We can’t mount until a valid pairing file is imported."
+        }
+        return "Mount the Developer Disk Image before enabling JIT."
+    }
+
+    private var ddiStatusColor: Color {
+        if ddiMounted { return .green }
+        if pairingFileLikelyInvalid { return .yellow }
+        return .orange
+    }
+
+    private func remountDeveloperDiskImage() {
+        guard pairingFileExists else {
+            showAlert(
+                title: "Pairing File Required",
+                message: "Import a valid pairing file before mounting the Developer Disk Image.",
+                showOk: true
+            )
+            return
+        }
+        guard !isRemountingDDI else { return }
+        isRemountingDDI = true
+        DispatchQueue.global(qos: .userInitiated).async {
+            MountingProgress.shared.pubMount()
+            DispatchQueue.main.async {
+                if MountingProgress.shared.mountingThread == nil {
+                    isRemountingDDI = false
+                }
+            }
+        }
+    }
+
+    private func runConnectionDiagnostics(autoStart: Bool = false) {
+        guard !isConnectionCheckRunning else { return }
+        connectionTimeoutTask?.cancel()
+        connectionTimeoutTask = nil
+        connectionInfoMessage = autoStart ? "Checking connection…" : nil
+        connectionCheckState = .running
+        let timeout = DispatchWorkItem {
+            DispatchQueue.main.async {
+                if case .running = connectionCheckState {
+                    connectionCheckState = .timeout
+                    connectionInfoMessage = "Connection timed out. Check the VPN and pairing file, then try again."
+                    connectionTimeoutTask = nil
+                }
+            }
+        }
+        connectionTimeoutTask = timeout
+        DispatchQueue.main.asyncAfter(deadline: .now() + 7, execute: timeout)
+
+        checkVPNConnection { success, error in
+            connectionTimeoutTask?.cancel()
+            connectionTimeoutTask = nil
+            if success {
+                connectionCheckState = .success
+                connectionInfoMessage = nil
+                if pairingFileExists && !heartbeatOK {
+                    startHeartbeatInBackground()
+                }
+            } else {
+                connectionCheckState = .failure(error ?? "VPN tunnel is not connected.")
+                connectionInfoMessage = error ?? "VPN tunnel is not connected."
+            }
+        }
     }
 
     private var primaryActionTitle: String {
@@ -505,87 +872,6 @@ struct HomeView: View {
         if pairingFileLikelyInvalid { return "arrow.clockwise" }
         if !ddiMounted { return "externaldrive" }
         return "cable.connector.horizontal"
-    }
-
-    private var readinessChecklist: [ChecklistItem] {
-        let vpnConnected = tunnel.tunnelStatus == .connected
-        let pairingItem: ChecklistItem
-
-        if isValidatingPairingFile {
-            pairingItem = ChecklistItem(
-                title: "Pairing file",
-                subtitle: "Validating pairing file…",
-                status: .waiting,
-                actionTitle: nil,
-                action: nil
-            )
-        } else if pairingFileLikelyInvalid {
-            pairingItem = ChecklistItem(
-                title: "Pairing file",
-                subtitle: "We couldn’t reach your device. Create a new pairing file on your trusted computer.",
-                status: .attention,
-                actionTitle: "Import New",
-                action: { isShowingPairingFilePicker = true }
-            )
-        } else if pairingFileExists {
-            pairingItem = ChecklistItem(
-                title: "Pairing file",
-                subtitle: "Imported and valid.",
-                status: .ready,
-                actionTitle: nil,
-                action: nil
-            )
-        } else if pairingFilePresentOnDisk {
-            pairingItem = ChecklistItem(
-                title: "Pairing file",
-                subtitle: "We couldn’t read the pairing file that’s on disk. Create a new pairing file on your trusted computer.",
-                status: .attention,
-                actionTitle: "Import New",
-                action: { isShowingPairingFilePicker = true }
-            )
-        } else {
-            pairingItem = ChecklistItem(
-                title: "Pairing file",
-                subtitle: "Import the pairing file generated from your trusted computer.",
-                status: .actionRequired,
-                actionTitle: "Import",
-                action: { isShowingPairingFilePicker = true }
-            )
-        }
-
-        let hideOtherIndicators = pairingFileLikelyInvalid || (pairingFilePresentOnDisk && !pairingFileExists && !isValidatingPairingFile)
-        if hideOtherIndicators {
-            return [pairingItem]
-        }
-
-        return [
-            pairingItem,
-            ChecklistItem(
-                title: "Developer Disk Image",
-                subtitle: ddiMounted
-                    ? "Mounted successfully."
-                    : (pairingFileLikelyInvalid
-                        ? "The Developer Disk Image can’t mount because the pairing file looks invalid. Create a new pairing file."
-                        : "The Developer Disk Image isn't mounted."),
-                status: ddiMounted ? .ready : .attention,
-                actionTitle: pairingFileLikelyInvalid ? "Import New" : nil,
-                action: pairingFileLikelyInvalid ? { isShowingPairingFilePicker = true } : nil
-            ),
-            ChecklistItem(
-                title: "VPN tunnel",
-                subtitle: vpnConnected ? "Active." : "Connect the StikDebug VPN from the Settings app if it’s not already on.",
-                status: vpnConnected ? .ready : .attention,
-                actionTitle: nil,
-                action: nil
-            ),
-            ChecklistItem(
-                title: "Heartbeat",
-                subtitle: heartbeatOK ? "Active." : "We retry automatically—leave the app open for a moment.",
-                status: heartbeatOK ? .ready : .waiting,
-                actionTitle: nil,
-                action: nil
-            )
-        ]
     }
 
     private var pairingImportProgressView: some View {
@@ -683,11 +969,6 @@ struct HomeView: View {
                         .font(.headline.weight(.semibold))
                         .foregroundStyle(.primary)
 
-                    if isLoadingQuickApps {
-                        ProgressView()
-                            .progressViewStyle(.circular)
-                            .controlSize(.small)
-                    }
                 }
 
                 Text("Favorites and recents stay within reach so you can enable debug with ease.")
@@ -826,21 +1107,26 @@ struct HomeView: View {
     private func loadAppListIfNeeded(force: Bool = false) {
         guard pairingFileExists else {
             cachedAppNames = [:]
-            isLoadingQuickApps = false
+            cachedAppNamesData = nil
             return
         }
 
-        if isLoadingQuickApps { return }
         if !force && !cachedAppNames.isEmpty { return }
-
-        isLoadingQuickApps = true
 
         DispatchQueue.global(qos: .userInitiated).async {
             let result = (try? JITEnableContext.shared.getAppList()) ?? [:]
+            let encoded = try? JSONEncoder().encode(result)
             DispatchQueue.main.async {
                 cachedAppNames = result
-                isLoadingQuickApps = false
+                cachedAppNamesData = encoded
             }
+        }
+    }
+
+    private func restoreCachedAppNamesIfAvailable() {
+        guard cachedAppNames.isEmpty, let data = cachedAppNamesData else { return }
+        if let decoded = try? JSONDecoder().decode([String: String].self, from: data) {
+            cachedAppNames = decoded
         }
     }
 
@@ -856,6 +1142,32 @@ struct HomeView: View {
                     )
             )
             .shadow(color: .black.opacity(0.15), radius: 12, x: 0, y: 4)
+    }
+
+    private func compactControlButton(icon: String, title: String, showSpinner: Bool = false) -> some View {
+        HStack(spacing: 6) {
+            if showSpinner {
+                ProgressView()
+                    .progressViewStyle(.circular)
+                    .controlSize(.small)
+            } else {
+                Image(systemName: icon)
+                    .font(.system(size: 14, weight: .semibold, design: .rounded))
+            }
+            Text(title)
+                .font(.caption.weight(.semibold))
+        }
+        .padding(.vertical, 8)
+        .padding(.horizontal, 12)
+        .frame(maxWidth: .infinity)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Color(UIColor.secondarySystemBackground).opacity(0.8))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(Color.white.opacity(0.1), lineWidth: 1)
+        )
     }
 
     private var toolsCard: some View {
@@ -1155,57 +1467,6 @@ struct HomeView: View {
         if pad < 4 { base64 += String(repeating: "=", count: pad) }
         return base64
     }
-    
-    // MARK: - iOS 26+ Disclaimer Card (above main card)
-    
-    private var disclaimerCard: some View {
-        HStack(alignment: .top, spacing: 12) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .foregroundColor(.yellow)
-                .imageScale(.large)
-            
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Important for iOS 26+")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundColor(.primary)
-                Text("Limited compatibility on iOS 26 and later. Some apps may not function as expected yet. We’re actively improving support over time.")
-                    .font(.footnote)
-                    .foregroundColor(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            Spacer()
-            
-            if !isOnOrAfteriOS26 {
-                Button {
-                    withAnimation {
-                        showiOS26Disclaimer = false
-                    }
-                } label: {
-                    Image(systemName: "xmark")
-                        .foregroundColor(.secondary)
-                        .padding(8)
-                        .background(
-                            Circle().fill(Color(UIColor.tertiarySystemBackground))
-                        )
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Dismiss")
-            }
-        }
-        .padding(14)
-        .background(
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .fill(.ultraThinMaterial)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 20, style: .continuous)
-                        .strokeBorder(Color.white.opacity(0.15), lineWidth: 1)
-                )
-        )
-        .shadow(color: .black.opacity(0.15), radius: 12, x: 0, y: 4)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("Important notice for iOS 26 and later. Limited compatibility; improvements are ongoing.")
-    }
-}
 
 private struct StatusDot: View {
     var color: Color
@@ -1241,58 +1502,6 @@ private struct StatusGlyph: View {
         .overlay(
             Circle()
                 .stroke(Color.white.opacity(0.12), lineWidth: 0.5)
-        )
-    }
-}
-
-private struct ChecklistRow: View {
-    let item: ChecklistItem
-    let accentColor: Color
-
-    var body: some View {
-        HStack(alignment: .center, spacing: 12) {
-            StatusGlyph(icon: item.status.iconName, tint: item.status.tint, size: 40, iconSize: 18)
-
-            VStack(alignment: .leading, spacing: 4) {
-                Text(item.title)
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.primary)
-                Text(item.subtitle)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            Spacer(minLength: 0)
-
-            if let actionTitle = item.actionTitle, let action = item.action {
-                Button(action: action) {
-                    Text(actionTitle)
-                        .font(.caption.weight(.semibold))
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 6)
-                        .background(
-                            Capsule(style: .continuous)
-                                .fill(accentColor.opacity(0.18))
-                        )
-                        .overlay(
-                            Capsule(style: .continuous)
-                                .stroke(accentColor.opacity(0.4), lineWidth: 1)
-                        )
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(accentColor)
-            }
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .background(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(Color(UIColor.secondarySystemBackground).opacity(0.55))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .stroke(Color.white.opacity(0.08), lineWidth: 1)
         )
     }
 }
@@ -1435,11 +1644,39 @@ private struct QuickAppBadge: View {
     }
 }
 
-private struct ReadinessSummary {
-    let title: String
-    let subtitle: String
+private struct StatusLightView: View {
+    let light: StatusLightData
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .fill(light.color.opacity(0.2))
+                .frame(width: 42, height: 42)
+            Image(systemName: light.icon)
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(light.color)
+        }
+        .overlay(
+            Circle()
+                .stroke(Color.white.opacity(0.12), lineWidth: 0.5)
+        )
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(light.label)
+    }
+}
+
+private struct StatusLightData: Identifiable {
+    let id = UUID()
+    let type: StatusLightType
     let icon: String
-    let tint: Color
+    let color: Color
+    let label: String
+}
+
+private enum StatusLightType {
+    case pairing
+    case wifi
+    case heartbeat
 }
 
 private struct PairingFileSignature: Equatable {
@@ -1447,40 +1684,41 @@ private struct PairingFileSignature: Equatable {
     let fileSize: UInt64
 }
 
-private enum ChecklistStatus {
-    case ready
-    case waiting
-    case attention
-    case actionRequired
+private enum ConnectionCheckState: Equatable {
+    case idle
+    case running
+    case success
+    case failure(String)
+    case timeout
+}
+
+private enum StartupIndicatorStatus: Equatable {
+    case idle
+    case running
+    case success
+    case warning
+    case error
 
     var iconName: String {
         switch self {
-        case .ready: return "checkmark.circle.fill"
-        case .waiting: return "clock.fill"
-        case .attention: return "exclamationmark.triangle.fill"
-        case .actionRequired: return "exclamationmark.octagon.fill"
+        case .success: return "checkmark.circle.fill"
+        case .warning: return "exclamationmark.triangle.fill"
+        case .error: return "xmark.circle.fill"
+        case .idle: return "circle"
+        case .running: return "clock.arrow.circlepath"
         }
     }
 
     var tint: Color {
         switch self {
-        case .ready: return .green
-        case .waiting: return .orange
-        case .attention: return .yellow
-        case .actionRequired: return .red
+        case .success: return .green
+        case .warning: return .yellow
+        case .error: return .red
+        case .idle: return .secondary
+        case .running: return .orange
         }
     }
 }
-
-private struct ChecklistItem: Identifiable {
-    let id = UUID()
-    let title: String
-    let subtitle: String
-    let status: ChecklistStatus
-    let actionTitle: String?
-    let action: (() -> Void)?
-}
-
 private struct QuickConnectItem: Identifiable {
     let bundleID: String
     let displayName: String
@@ -1693,7 +1931,7 @@ private struct ConnectByPIDSheet: View {
     }
 }
 
-#Preview { HomeView() }
+}
 
 // MARK: - TXM detection
 

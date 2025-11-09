@@ -112,19 +112,19 @@ struct InstalledAppsListView: View {
         return base.filter { matches(query, bundleID: $0.key, name: $0.value) }
     }
 
-    private enum AppListTab: String, CaseIterable, Identifiable {
-        case debuggable
-        case launch
+private enum AppListTab: Int, CaseIterable, Identifiable {
+    case debuggable
+    case launch
 
-        var id: String { rawValue }
+    var id: Int { rawValue }
 
-        var title: String {
-            switch self {
-            case .debuggable: return "Debuggable"
-            case .launch: return "Launch"
-            }
+    var title: String {
+        switch self {
+        case .debuggable: return "Debuggable"
+        case .launch: return "Launch Apps"
         }
     }
+}
 
     private struct LaunchFeedback: Identifiable {
         let id = UUID()
@@ -447,14 +447,18 @@ struct InstalledAppsListView: View {
     @ViewBuilder
     private var tabbedContent: some View {
         VStack(spacing: 14) {
-            Picker("", selection: $selectedTab) {
-                ForEach(AppListTab.allCases) { tab in
-                    Text(tab.title.localized)
-                        .tag(tab)
-                }
-            }
-            .pickerStyle(.segmented)
-            .padding(.horizontal, 20)
+            SegmentedControl(
+                titles: AppListTab.allCases.map { $0.title.localized },
+                selection: Binding(
+                    get: { selectedTab.rawValue },
+                    set: { newValue in
+                        if let tab = AppListTab(rawValue: newValue) {
+                            selectedTab = tab
+                        }
+                    }
+                )
+            )
+            .padding(.horizontal, 12)
 
             tabContent(for: selectedTab)
         }
@@ -1492,9 +1496,56 @@ extension Dictionary: @retroactive RawRepresentable where Key: Codable, Value: C
 
 // MARK: - Preview
 
-#Preview {
-    InstalledAppsListView { _ in }
-        .environment(\.colorScheme, .dark)
+struct InstalledAppsListView_Previews: PreviewProvider {
+    static var previews: some View {
+        InstalledAppsListView { _ in }
+            .environment(\.colorScheme, .dark)
+    }
+}
+
+private struct SegmentedControl: UIViewRepresentable {
+    let titles: [String]
+    @Binding var selection: Int
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(self)
+    }
+
+    func makeUIView(context: Context) -> UISegmentedControl {
+        let control = UISegmentedControl(items: titles)
+        control.selectedSegmentIndex = selection
+        control.addTarget(context.coordinator, action: #selector(Coordinator.valueChanged(_:)), for: .valueChanged)
+        return control
+    }
+
+    func updateUIView(_ uiView: UISegmentedControl, context: Context) {
+        if uiView.numberOfSegments != titles.count {
+            uiView.removeAllSegments()
+            for (index, title) in titles.enumerated() {
+                uiView.insertSegment(withTitle: title, at: index, animated: false)
+            }
+        }
+
+        for (index, title) in titles.enumerated() {
+            uiView.setTitle(title, forSegmentAt: index)
+        }
+
+        if uiView.selectedSegmentIndex != selection {
+            uiView.selectedSegmentIndex = selection
+        }
+    }
+
+    final class Coordinator: NSObject {
+        var parent: SegmentedControl
+
+        init(_ parent: SegmentedControl) {
+            self.parent = parent
+        }
+
+        @objc func valueChanged(_ sender: UISegmentedControl) {
+            parent.selection = sender.selectedSegmentIndex
+        }
+    }
 }
 
 class InstalledAppsViewModel: ObservableObject {

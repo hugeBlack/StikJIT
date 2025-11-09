@@ -490,18 +490,10 @@ struct HeartbeatApp: App {
     @AppStorage("customAccentColor") private var customAccentColorHex: String = ""
     @AppStorage("appTheme") private var appThemeRaw: String = AppTheme.system.rawValue
     @State private var showWelcomeSheet: Bool = false
-    @State private var isLoading2 = true
-    @State private var isPairing = false
-    @State private var heartBeat = false
-    @State private var error: Int32? = nil
     @State private var show_alert = false
     @State private var alert_string = ""
     @State private var alert_title = ""
-    @State private var showTimeoutError = false
-    @State private var showContinueWarning = false
-    @State private var timeoutTimer: Timer?
     @StateObject private var mount = MountingProgress.shared
-    @StateObject private var dnsChecker = DNSChecker()
     @StateObject private var themeExpansionManager = ThemeExpansionManager()
     @Environment(\.scenePhase) private var scenePhase   // Observe scene lifecycle
     
@@ -566,148 +558,37 @@ struct HeartbeatApp: App {
     var body: some Scene {
         WindowGroup {
             BackgroundContainer {
-                Group {
-                    if isLoading2 {
-                        LoadingView(showAlert: $show_alert, alertTitle: $alert_title, alertMessage: $alert_string)
-                            .onAppear {
-                                dnsChecker.checkDNS()
-                                timeoutTimer?.invalidate()
-                                timeoutTimer = Timer.scheduledTimer(withTimeInterval: 7, repeats: false) { _ in
-                                    if isLoading2 {
-                                        showTimeoutError = true
-                                    }
-                                }
-                                checkVPNConnection() { result, vpn_error in
-                                    if result {
-                                        if FileManager.default.fileExists(atPath: URL.documentsDirectory.appendingPathComponent("pairingFile.plist").path) {
-                                            Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { timer in
-                                                if pubHeartBeat {
-                                                    isLoading2 = false
-                                                    timer.invalidate()
-                                                } else {
-                                                    if let error {
-                                                        if error == -9 {  // InvalidHostID is -9
-                                                            isPairing = true
-                                                        } else {
-                                                            startHeartbeatInBackground()
-                                                        }
-                                                        self.error = nil
-                                                    }
-                                                }
-                                            }
-                                            startHeartbeatInBackground()
-                                        } else {
-                                            isLoading2 = false
-                                        }
-                                    } else if let vpn_error {
-                                        showAlert(title: "Error", message: "EM Proxy failed to connect: \(vpn_error)", showOk: true) { _ in
-                                            exit(0)
-                                        }
+                MainTabView()
+                    .onAppear {
+                        let fileManager = FileManager.default
+                        for (index, urlString) in urls.enumerated() {
+                            let destinationURL = URL.documentsDirectory.appendingPathComponent(outputFiles[index])
+                            if !fileManager.fileExists(atPath: destinationURL.path) {
+                                downloadFile(from: urlString, to: destinationURL) { result in
+                                    if (result != "") {
+                                        alert_title = "An Error has Occurred"
+                                        alert_string = "[Download DDI Error]: " + result
+                                        show_alert = true
                                     }
                                 }
                             }
-                            .fileImporter(
-                                isPresented: $isPairing,
-                                allowedContentTypes: [
-                                    UTType(filenameExtension: "mobiledevicepairing", conformingTo: .data)!,
-                                    .propertyList
-                                ]
-                            ) { result in
-                                switch result {
-                                case .success(let url):
-                                    let fileManager = FileManager.default
-                                    let accessing = url.startAccessingSecurityScopedResource()
-                                    
-                                    if fileManager.fileExists(atPath: url.path) {
-                                        do {
-                                            if fileManager.fileExists(atPath: URL.documentsDirectory.appendingPathComponent("pairingFile.plist").path) {
-                                                try fileManager.removeItem(at: URL.documentsDirectory.appendingPathComponent("pairingFile.plist"))
-                                            }
-                                            try fileManager.copyItem(at: url, to: URL.documentsDirectory.appendingPathComponent("pairingFile.plist"))
-                                            print("File copied successfully!")
-                                            startHeartbeatInBackground()
-                                        } catch {
-                                            print("Error copying file: \(error)")
-                                        }
-                                    } else {
-                                        print("Source file does not exist.")
-                                    }
-                                    
-                                    if accessing {
-                                        url.stopAccessingSecurityScopedResource()
-                                    }
-                                case .failure(_):
-                                    print("Failed")
-                                }
-                            }
-                            .overlay(
-                                ZStack {
-                                    if showTimeoutError {
-                                        CustomErrorView(
-                                            title: "Connection Error",
-                                            message: "Check your connection and ensure your pairing file is valid and try again.",
-                                            onDismiss: {
-                                                showTimeoutError = false
-                                            },
-                                            showButton: true,
-                                            primaryButtonText: "Continue Anyway",
-                                            onPrimaryButtonTap: {
-                                                showContinueWarning = true
-                                            }
-                                        )
-                                    }
-
-                                    if showContinueWarning {
-                                        CustomErrorView(
-                                            title: "Proceeding Without Connection",
-                                            message: "StikDebug will not function as expected if you choose to continue.",
-                                            onDismiss: {
-                                                showContinueWarning = false
-                                            },
-                                            showButton: true,
-                                            primaryButtonText: "I Understand",
-                                            onPrimaryButtonTap: {
-                                                showContinueWarning = false
-                                                isLoading2 = false
-                                            }
-                                        )
-                                    }
-                                }
-                            )
-                    } else {
-                        MainTabView()
-                            .onAppear {
-                                let fileManager = FileManager.default
-                                for (index, urlString) in urls.enumerated() {
-                                    let destinationURL = URL.documentsDirectory.appendingPathComponent(outputFiles[index])
-                                    if !fileManager.fileExists(atPath: destinationURL.path) {
-                                        downloadFile(from: urlString, to: destinationURL) { result in
-                                            if (result != "") {
-                                                alert_title = "An Error has Occurred"
-                                                alert_string = "[Download DDI Error]: " + result
-                                                show_alert = true
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                            .overlay(
-                                ZStack {
-                                    if show_alert {
-                                        CustomErrorView(
-                                            title: alert_title,
-                                            message: alert_string,
-                                            onDismiss: {
-                                                show_alert = false
-                                            },
-                                            showButton: true,
-                                            primaryButtonText: "OK"
-                                        )
-                                    }
-                                }
-                            )
+                        }
                     }
-                }
+                    .overlay(
+                        ZStack {
+                            if show_alert {
+                                CustomErrorView(
+                                    title: alert_title,
+                                    message: alert_string,
+                                    onDismiss: {
+                                        show_alert = false
+                                    },
+                                    showButton: true,
+                                    primaryButtonText: "OK"
+                                )
+                            }
+                        }
+                    )
             }
             .themeExpansionManager(themeExpansionManager)
             // Apply global tint to all SwiftUI views in this window
@@ -744,54 +625,6 @@ struct HeartbeatApp: App {
                 print("App became active – restarting heartbeat")
                 startHeartbeatInBackground()
             }
-        }
-    }
-    
-    private func checkVPNConnection(callback: @escaping (Bool, String?) -> Void) {
-        let host = NWEndpoint.Host("10.7.0.1")
-        let port = NWEndpoint.Port(rawValue: 62078)!
-        let connection = NWConnection(host: host, port: port, using: .tcp)
-        var timeoutWorkItem: DispatchWorkItem?
-        
-        timeoutWorkItem = DispatchWorkItem { [weak connection] in
-            if connection?.state != .ready {
-                connection?.cancel()
-                DispatchQueue.main.async {
-                    if timeoutWorkItem?.isCancelled == false {
-                        callback(false, "[TIMEOUT] The loopback VPN is not connected. Try closing this app, turn it off and back on.")
-                    }
-                }
-            }
-        }
-        
-        connection.stateUpdateHandler = { [weak connection] state in
-            switch state {
-            case .ready:
-                timeoutWorkItem?.cancel()
-                connection?.cancel()
-                DispatchQueue.main.async {
-                    callback(true, nil)
-                }
-            case .failed(let error):
-                timeoutWorkItem?.cancel()
-                connection?.cancel()
-                DispatchQueue.main.async {
-                    if error == NWError.posix(.ETIMEDOUT) {
-                        callback(false, "The loopback VPN is not connected. Try closing the app, turn it off and back on.")
-                    } else if error == NWError.posix(.ECONNREFUSED) {
-                        callback(false, "Wifi is not connected. StikJIT won't work on cellular data.")
-                    } else {
-                        callback(false, "em proxy check error: \(error.localizedDescription)")
-                    }
-                }
-            default:
-                break
-            }
-        }
-        
-        connection.start(queue: .global())
-        if let workItem = timeoutWorkItem {
-            DispatchQueue.global().asyncAfter(deadline: .now() + 20, execute: workItem)
         }
     }
 }
@@ -847,7 +680,8 @@ class MountingProgress: ObservableObject {
                 self.mountingThread = nil
             }
             
-            mountingThread = Thread {
+            mountingThread = Thread { [weak self] in
+                guard let self = self else { return }
                 let mountResult = mountPersonalDDI(
                     imagePath: URL.documentsDirectory.appendingPathComponent("DDI/Image.dmg").path,
                     trustcachePath: URL.documentsDirectory.appendingPathComponent("DDI/Image.dmg.trustcache").path,
@@ -855,16 +689,17 @@ class MountingProgress: ObservableObject {
                     pairingFilePath: pairingpath
                 )
                 
-                if mountResult != 0 {
-                    showAlert(title: "Error", message: "An Error Occured when Mounting the DDI\nError Code: \(mountResult)", showOk: true, showTryAgain: true) { shouldTryAgain in
-                        if shouldTryAgain {
-                            self.mount()
+                DispatchQueue.main.async {
+                    if mountResult != 0 {
+                        showAlert(title: "Error", message: "An Error Occured when Mounting the DDI\nError Code: \(mountResult)", showOk: true, showTryAgain: true) { shouldTryAgain in
+                            if shouldTryAgain {
+                                self.mount()
+                            }
                         }
-                    }
-                } else {
-                    DispatchQueue.main.async {
+                    } else {
                         self.coolisMounted = isMounted()
                     }
+                    self.mountingThread = nil
                 }
             }
             
@@ -942,68 +777,51 @@ func startHeartbeatInBackground() {
     heartBeatThread.start()
 }
 
-struct LoadingView: View {
-    @Binding var showAlert: Bool
-    @Binding var alertTitle: String
-    @Binding var alertMessage: String
+func checkVPNConnection(callback: @escaping (Bool, String?) -> Void) {
+    let host = NWEndpoint.Host("10.7.0.1")
+    let port = NWEndpoint.Port(rawValue: 62078)!
+    let connection = NWConnection(host: host, port: port, using: .tcp)
+    var timeoutWorkItem: DispatchWorkItem?
     
-    @State private var animate = false
-    @Environment(\.colorScheme) private var colorScheme
-    @AppStorage("customAccentColor") private var customAccentColorHex: String = ""
-    @Environment(\.themeExpansionManager) private var themeExpansion
-    
-    private var accentColor: Color {
-        themeExpansion?.resolvedAccentColor(from: customAccentColorHex) ?? .blue
-    }
-    
-    var body: some View {
-        ZStack {
-            // Background now comes from global BackgroundContainer
-            Color.clear.ignoresSafeArea()
-            
-            VStack {
-                ZStack {
-                    Circle()
-                        .stroke(lineWidth: 8)
-                        .foregroundColor(accentColor.opacity(0.18))
-                        .frame(width: 80, height: 80)
-                    
-                    Circle()
-                        .trim(from: 0, to: 0.7)
-                        .stroke(
-                            AngularGradient(
-                                gradient: Gradient(colors: [
-                                    accentColor.opacity(0.95),
-                                    accentColor.opacity(0.45)
-                                ]),
-                                center: .center
-                            ),
-                            style: StrokeStyle(lineWidth: 6, lineCap: .round)
-                        )
-                        .rotationEffect(.degrees(animate ? 360 : 0))
-                        .frame(width: 80, height: 80)
-                        .animation(Animation.linear(duration: 1.2).repeatForever(autoreverses: false), value: animate)
+    timeoutWorkItem = DispatchWorkItem { [weak connection] in
+        if connection?.state != .ready {
+            connection?.cancel()
+            DispatchQueue.main.async {
+                if timeoutWorkItem?.isCancelled == false {
+                    callback(false, "[TIMEOUT] The loopback VPN is not connected. Try closing this app, turn it off and back on.")
                 }
-                .shadow(color: accentColor.opacity(0.25), radius: 10, x: 0, y: 0)
-                .onAppear {
-                    animate = true
-                    let os = ProcessInfo.processInfo.operatingSystemVersion
-                    if os.majorVersion < 17 || (os.majorVersion == 17 && os.minorVersion < 4) {
-                        alertTitle = "Unsupported OS Version".localized
-                        alertMessage = String(format: "StikJIT only supports 17.4 and above. Your device is running iOS/iPadOS %@".localized, "\(os.majorVersion).\(os.minorVersion).\(os.patchVersion)")
-                        showAlert = true
-                    }
-                }
-                
-                Text("Loading...")
-                    .font(.system(size: 20, weight: .medium, design: .rounded))
-                    .foregroundColor(.primary)
-                    .padding(.top, 20)
-                    .opacity(animate ? 1.0 : 0.5)
-                    .animation(Animation.easeInOut(duration: 1.5).repeatForever(autoreverses: true), value: animate)
             }
         }
-        // Inherit system color scheme
+    }
+    
+    connection.stateUpdateHandler = { [weak connection] state in
+        switch state {
+        case .ready:
+            timeoutWorkItem?.cancel()
+            connection?.cancel()
+            DispatchQueue.main.async {
+                callback(true, nil)
+            }
+        case .failed(let error):
+            timeoutWorkItem?.cancel()
+            connection?.cancel()
+            DispatchQueue.main.async {
+                if error == NWError.posix(.ETIMEDOUT) {
+                    callback(false, "The loopback VPN is not connected. Try closing the app, turn it off and back on.")
+                } else if error == NWError.posix(.ECONNREFUSED) {
+                    callback(false, "Wifi is not connected. StikJIT won't work on cellular data.")
+                } else {
+                    callback(false, "em proxy check error: \(error.localizedDescription)")
+                }
+            }
+        default:
+            break
+        }
+    }
+    
+    connection.start(queue: .global())
+    if let workItem = timeoutWorkItem {
+        DispatchQueue.global().asyncAfter(deadline: .now() + 20, execute: workItem)
     }
 }
 
