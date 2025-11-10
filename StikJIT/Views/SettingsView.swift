@@ -14,7 +14,7 @@ struct SettingsView: View {
     @AppStorage("enableAdvancedOptions") private var enableAdvancedOptions = false
     @AppStorage("enableAdvancedBetaOptions") private var enableAdvancedBetaOptions = false
     @AppStorage("enableTesting") private var enableTesting = false
-    @AppStorage("enablePiP") private var enablePiP = false
+    @AppStorage(UserDefaults.Keys.enableContinuedProcessing) private var enableContinuedProcessing = false
     @AppStorage(UserDefaults.Keys.txmOverride) private var overrideTXMDetection = false
     @AppStorage("customAccentColor") private var customAccentColorHex: String = ""
     @AppStorage("appTheme") private var appThemeRaw: String = AppTheme.system.rawValue
@@ -332,8 +332,7 @@ struct SettingsView: View {
 
                 Toggle("Run Default Script After Connecting", isOn: $useDefaultScript)
                     .tint(accentColor)
-                Toggle("Picture in Picture", isOn: $enablePiP)
-                    .tint(accentColor)
+                continuedProcessingToggle
                 Toggle(isOn: $overrideTXMDetection) {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Always Run Scripts")
@@ -349,7 +348,7 @@ struct SettingsView: View {
             .onChange(of: enableAdvancedOptions) { _, newValue in
                 if !newValue {
                     useDefaultScript = false
-                    enablePiP = false
+                    enableContinuedProcessing = false
                     enableAdvancedBetaOptions = false
                     enableTesting = false
                 }
@@ -393,6 +392,24 @@ struct SettingsView: View {
                         Spacer()
                     }
                     .padding(.vertical, 8)
+                }
+            }
+        }
+    }
+
+    private var continuedProcessingToggle: some View {
+        Group {
+            if ContinuedProcessingManager.shared.isSupported {
+                Toggle("Allow Continued Processing", isOn: $enableContinuedProcessing)
+                    .tint(accentColor)
+            } else {
+                VStack(alignment: .leading, spacing: 4) {
+                    Toggle("Allow Continued Processing", isOn: .constant(false))
+                        .tint(accentColor)
+                        .disabled(true)
+                    Text("Requires iOS 26 or later.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
                 }
             }
         }

@@ -7,7 +7,6 @@
 
 import SwiftUI
 import UniformTypeIdentifiers
-import Pipify
 import UIKit
 import WidgetKit
 import Combine
@@ -51,9 +50,7 @@ struct HomeView: View {
     @AppStorage("enableAdvancedOptions") private var enableAdvancedOptions = false
 
     @AppStorage("useDefaultScript") private var useDefaultScript = false
-    @AppStorage("enablePiP") private var enablePiP = true
     @State var scriptViewShow = false
-    @State var pipRequired = false
     @AppStorage("DefaultScriptName") var selectedScript = "attachDetach.js"
     @State var jsModel: RunJSViewModel?
     
@@ -190,6 +187,7 @@ struct HomeView: View {
         }
         .onChange(of: favoriteApps) { _, _ in
             loadAppListIfNeeded()
+            syncFavoriteAppNamesWithCache()
         }
         .onChange(of: recentApps) { _, _ in
             loadAppListIfNeeded()
@@ -250,42 +248,9 @@ struct HomeView: View {
                 var autoScriptData: Data? = nil
                 var autoScriptName: String? = nil
                 
-                let appName: String? = (try? JITEnableContext.shared.getAppList()[selectedBundle])
-                
-                if #available(iOS 26, *) {
-                    if ProcessInfo.processInfo.hasTXM, let appName {
-                        if appName == "maciOS" {
-                            if let url = Bundle.main.url(forResource: "script1", withExtension: "js"),
-                               let data = try? Data(contentsOf: url) {
-                                autoScriptData = data
-                                autoScriptName = "script1.js"
-                            }
-                        } else if appName == "Amethyst" {
-                            if let url = Bundle.main.url(forResource: "script2", withExtension: "js"),
-                               let data = try? Data(contentsOf: url) {
-                                autoScriptData = data
-                                autoScriptName = "script2.js"
-                            }
-                        } else if appName == "Geode" {
-                            if let url = Bundle.main.url(forResource: "Geode", withExtension: "js"),
-                               let data = try? Data(contentsOf: url) {
-                                autoScriptData = data
-                                autoScriptName = "Geode.js"
-                            }
-                        } else if appName == "MeloNX" {
-                            if let url = Bundle.main.url(forResource: "melo", withExtension: "js"),
-                               let data = try? Data(contentsOf: url) {
-                                autoScriptData = data
-                                autoScriptName = "melo.js"
-                            }
-                        } else if appName == "UTM" || appName == "DolphiniOS" {
-                            if let url = Bundle.main.url(forResource: "utmjit", withExtension: "js"),
-                               let data = try? Data(contentsOf: url) {
-                                autoScriptData = data
-                                autoScriptName = "utmjit.js"
-                            }
-                        }
-                    }
+                if let scriptInfo = autoScript(for: selectedBundle) {
+                    autoScriptData = scriptInfo.data
+                    autoScriptName = scriptInfo.name
                 }
                 
                 startJITInBackground(bundleID: selectedBundle,
@@ -294,12 +259,6 @@ struct HomeView: View {
                                      scriptName: autoScriptName,
                                      triggeredByURLScheme: false)
             }
-        }
-        .pipify(isPresented: Binding(
-            get: { pipRequired && enablePiP },
-            set: { newValue in pipRequired = newValue }
-        )) {
-            RunJSViewPiP(model: $jsModel)
         }
         .sheet(isPresented: $scriptViewShow) {
             NavigationView {
@@ -345,6 +304,11 @@ struct HomeView: View {
                 }
                 if let scriptName = components?.queryItems?.first(where: { $0.name == "script-name" })?.value {
                     config.scriptName = scriptName
+                }
+                if config.scriptData == nil, let bundleID = config.bundleID,
+                   let scriptInfo = autoScript(for: bundleID) {
+                    config.scriptData = scriptInfo.data
+                    config.scriptName = scriptInfo.name
                 }
                 if viewDidAppeared {
                     startJITInBackground(bundleID: config.bundleID, pid: config.pid, scriptData: config.scriptData, scriptName: config.scriptName, triggeredByURLScheme: true)
@@ -1033,6 +997,7 @@ struct HomeView: View {
 
                 if let restoredApps, cachedAppNames.isEmpty {
                     cachedAppNames = restoredApps
+                    syncFavoriteAppNamesWithCache()
                 }
 
                 refreshBackground()
@@ -1062,6 +1027,7 @@ struct HomeView: View {
             let encoded = try? JSONEncoder().encode(result)
             DispatchQueue.main.async {
                 cachedAppNames = result
+                syncFavoriteAppNamesWithCache()
                 cachedAppNamesData = encoded
             }
         }
@@ -1253,6 +1219,65 @@ struct HomeView: View {
     }
     private func refreshBackground() { }
     
+    private func autoScript(for bundleID: String) -> (data: Data, name: String)? {
+        guard ProcessInfo.processInfo.hasTXM else { return nil }
+        guard #available(iOS 26, *) else { return nil }
+        let appName = (try? JITEnableContext.shared.getAppList()[bundleID]) ?? storedFavoriteName(for: bundleID)
+        guard let appName,
+              let resource = autoScriptResource(for: appName),
+              let url = Bundle.main.url(forResource: resource.resource, withExtension: "js"),
+              let data = try? Data(contentsOf: url) else {
+            return nil
+        }
+        return (data, resource.fileName)
+    }
+
+    private func storedFavoriteName(for bundleID: String) -> String? {
+        let defaults = UserDefaults(suiteName: "group.com.stik.sj")
+        let names = defaults?.dictionary(forKey: "favoriteAppNames") as? [String: String]
+        return names?[bundleID]
+    }
+
+    private func syncFavoriteAppNamesWithCache() {
+        guard let sharedDefaults = UserDefaults(suiteName: "group.com.stik.sj") else { return }
+        let favorites = sharedDefaults.stringArray(forKey: "favoriteApps") ?? []
+        guard !favorites.isEmpty else { return }
+
+        var storedNames = (sharedDefaults.dictionary(forKey: "favoriteAppNames") as? [String: String]) ?? [:]
+        var changed = false
+
+        for bundle in favorites {
+            guard let rawName = cachedAppNames[bundle], !rawName.isEmpty else { continue }
+            let display = shortDisplayName(from: rawName)
+            if storedNames[bundle] != display {
+                storedNames[bundle] = display
+                changed = true
+            }
+        }
+
+        if changed {
+            sharedDefaults.set(storedNames, forKey: "favoriteAppNames")
+            WidgetCenter.shared.reloadTimelines(ofKind: "FavoritesWidget")
+        }
+    }
+    
+    private func autoScriptResource(for appName: String) -> (resource: String, fileName: String)? {
+        switch appName {
+        case "maciOS":
+            return ("script1", "script1.js")
+        case "Amethyst":
+            return ("script2", "script2.js")
+        case "Geode":
+            return ("Geode", "Geode.js")
+        case "MeloNX":
+            return ("melo", "melo.js")
+        case "UTM", "DolphiniOS":
+            return ("utmjit", "utmjit.js")
+        default:
+            return nil
+        }
+    }
+    
     private func getJsCallback(_ script: Data, name: String? = nil) -> DebugAppCallback {
         return { pid, debugProxyHandle, semaphore in
             jsModel = RunJSViewModel(pid: Int(pid), debugProxy: debugProxyHandle, semaphore: semaphore)
@@ -1291,9 +1316,6 @@ struct HomeView: View {
             if ProcessInfo.processInfo.hasTXM, let sd = scriptData {
                 callback = getJsCallback(sd, name: scriptName ?? bundleID ?? "Script")
                 if triggeredByURLScheme { usleep(500000) }
-                pipRequired = true
-            } else {
-                pipRequired = false
             }
             
             let logger: LogFunc = { message in if let message { LogManager.shared.addInfoLog(message) } }
@@ -1316,7 +1338,6 @@ struct HomeView: View {
                 }
             }
             isProcessing = false
-            pipRequired = false
         }
     }
 

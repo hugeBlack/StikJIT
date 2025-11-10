@@ -16,6 +16,8 @@ class RunJSViewModel: ObservableObject {
     var pid: Int
     var debugProxy: OpaquePointer?
     var semaphore: dispatch_semaphore_t?
+    private var progressTimer: DispatchSourceTimer?
+    private var reportedProgress: Double = 0
     
     init(pid: Int, debugProxy: OpaquePointer?, semaphore: dispatch_semaphore_t?) {
         self.pid = pid
@@ -30,6 +32,7 @@ class RunJSViewModel: ObservableObject {
     func runScript(data: Data, name: String? = nil) throws {
         let scriptContent = String(data: data, encoding: .utf8)
         scriptName = name ?? "Script"
+        startContinuedProcessing(withTitle: scriptName)
         
         let getPidFunction: @convention(block) () -> Int = {
             return self.pid
@@ -73,37 +76,48 @@ class RunJSViewModel: ObservableObject {
         if let semaphore {
             semaphore.signal()
         }
-        
+
         DispatchQueue.main.async {
             if let exception = self.context?.exception {
                 self.logs.append(exception.debugDescription)
             }
-            
+            let success = self.context?.exception == nil && !self.executionInterrupted
+            self.stopContinuedProcessing(success: success)
             self.logs.append("Script Execution Completed")
-            self.logs.append("You are safe to close the PIP Window.")
+            self.logs.append("Background processing finished. You can dismiss this view.")
         }
     }
-}
-
-struct RunJSViewPiP: View {
-    @Binding var model: RunJSViewModel?
-    @State var logs: [String] = []
-    let timer = Timer.publish(every: 0.034, on: .main, in: .common).autoconnect()
     
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            ForEach(logs.suffix(6).indices, id: \.self) { index in
-                Text(logs.suffix(6)[index])
-                    .font(.system(size: 12))
-                    .foregroundStyle(.white)
+    private func startContinuedProcessing(withTitle title: String) {
+        guard ContinuedProcessingManager.shared.isSupported,
+              UserDefaults.standard.bool(forKey: UserDefaults.Keys.enableContinuedProcessing) else { return }
+        stopProgressTimer()
+        reportedProgress = 0.05
+        ContinuedProcessingManager.shared.begin(title: title, subtitle: "Script execution in progress")
+        ContinuedProcessingManager.shared.updateProgress(reportedProgress)
+        let timer = DispatchSource.makeTimerSource(queue: DispatchQueue.global(qos: .background))
+        timer.schedule(deadline: .now() + 5, repeating: 5)
+        timer.setEventHandler { [weak self] in
+            guard let self else { return }
+            self.reportedProgress = min(0.9, self.reportedProgress + 0.1)
+            ContinuedProcessingManager.shared.updateProgress(self.reportedProgress)
+            if self.reportedProgress >= 0.9 {
+                self.stopProgressTimer()
             }
         }
-        .padding()
-        .onReceive(timer) { _ in
-            self.logs = model?.logs ?? []
-        }
-        .frame(width: 300, height: 150)
+        timer.resume()
+        progressTimer = timer
+    }
+    
+    private func stopContinuedProcessing(success: Bool) {
+        stopProgressTimer()
+        ContinuedProcessingManager.shared.updateProgress(1.0)
+        ContinuedProcessingManager.shared.finish(success: success)
+    }
+
+    private func stopProgressTimer() {
+        progressTimer?.cancel()
+        progressTimer = nil
     }
 }
 
