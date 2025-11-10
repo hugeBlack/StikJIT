@@ -107,6 +107,10 @@ struct DisplayView: View {
     private var backgroundStyle: BackgroundStyle {
         themeExpansion?.backgroundStyle(for: selectedThemeIdentifier) ?? AppTheme.system.backgroundStyle
     }
+
+    private var shouldShowThemeExpansionUpsell: Bool {
+        themeExpansion?.shouldShowThemeExpansionUpsell ?? true
+    }
     
     var body: some View {
         NavigationStack {
@@ -121,7 +125,7 @@ struct DisplayView: View {
                             accentCard
                             themeCard
                             customThemesSection
-                        } else {
+                        } else if shouldShowThemeExpansionUpsell {
                             // Accent preview remains above
                             accentPreview
                             
@@ -132,7 +136,6 @@ struct DisplayView: View {
                                     customThemesPreview
                                 }
                                 .zIndex(0)
-                                
                                 themeExpansionUpsellCard
                                     .frame(maxWidth: .infinity) // match other cards’ width
                                     .zIndex(1)

@@ -45,7 +45,6 @@ struct HomeView: View {
     @State private var showPIDSheet = false
     @AppStorage("recentPIDs") private var recentPIDs: [Int] = []
     @State private var justCopied = false
-    @State private var showingConsoleLogsView = false
     
     @State private var viewDidAppeared = false
     @State private var pendingJITEnableConfiguration : JITEnableConfiguration? = nil
@@ -112,7 +111,6 @@ struct HomeView: View {
                         if !pinnedLaunchItems.isEmpty {
                             launchShortcutsCard
                         }
-                        toolsCard
                         tipsCard
                     }
                     .padding(.horizontal, 20)
@@ -241,13 +239,6 @@ struct HomeView: View {
                 if accessing { url.stopAccessingSecurityScopedResource() }
             case .failure(let error):
                 print("Failed to import file: \(error)")
-            }
-        }
-        .sheet(isPresented: $showingConsoleLogsView) {
-            if let manager = themeExpansion {
-                ConsoleLogsView().themeExpansionManager(manager)
-            } else {
-                ConsoleLogsView()
             }
         }
         .sheet(isPresented: $isShowingInstalledApps) {
@@ -1114,31 +1105,6 @@ struct HomeView: View {
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .stroke(Color.white.opacity(0.1), lineWidth: 1)
         )
-    }
-
-    private var toolsCard: some View {
-        homeCard {
-            VStack(alignment: .leading, spacing: 12) {
-                Text("Tools")
-                    .font(.headline)
-                    .foregroundStyle(.secondary)
-
-                VStack(spacing: 10) {
-                    Button {
-                        showingConsoleLogsView = true
-                    } label: {
-                        whiteCardButtonLabel(icon: "terminal", title: "Open Console")
-                    }
-
-             //       Button {
-              //          isShowingInstalledApps = true
-              //      } label: {
-               //         secondaryButtonLabel(icon: "list.bullet", title: "Installed Apps")
-               //     }
-               //     .buttonStyle(.plain)
-                }
-            }
-        }
     }
 
     private var tipsCard: some View {

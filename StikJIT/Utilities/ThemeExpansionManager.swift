@@ -74,6 +74,8 @@ enum DistributorType: String {
 @MainActor
 final class ThemeExpansionManager: ObservableObject {
     static let productIdentifier = "SD_Theme_Expansion"
+    static let comingSoonMessage = "Theme Expansion is coming soon on this store."
+    static let unavailableMessage = "Theme Expansion isn’t available."
 
     @Published private(set) var hasThemeExpansion = false
     @Published private(set) var themeExpansionProduct: Product?
@@ -84,6 +86,13 @@ final class ThemeExpansionManager: ObservableObject {
     // New: distribution awareness
     @Published private(set) var distributor: DistributorType
     var isAppStoreBuild: Bool { distributor == .appStore }
+    var shouldShowThemeExpansionUpsell: Bool {
+        guard isAppStoreBuild else { return false }
+        if let lastError, lastError == Self.unavailableMessage {
+            return false
+        }
+        return true
+    }
 
     private var updatesTask: Task<Void, Never>?
     private let isPreviewInstance: Bool
@@ -163,7 +172,7 @@ final class ThemeExpansionManager: ObservableObject {
     func restorePurchases() async {
         guard !isPreviewInstance else { return }
         guard isAppStoreBuild else {
-            lastError = "Theme Expansion is coming soon on this store."
+            lastError = Self.comingSoonMessage
             return
         }
         isProcessing = true
@@ -180,7 +189,7 @@ final class ThemeExpansionManager: ObservableObject {
     func purchaseThemeExpansion() async {
         guard !isPreviewInstance else { return }
         guard isAppStoreBuild else {
-            lastError = "Theme Expansion is coming soon on this store."
+            lastError = Self.comingSoonMessage
             return
         }
 
@@ -195,13 +204,9 @@ final class ThemeExpansionManager: ObservableObject {
                     product = first
                 } else {
                     #if targetEnvironment(simulator)
-                    lastError = """
-                    Theme Expansion isn’t available.
-                    """
+                    lastError = Self.unavailableMessage
                     #else
-                    lastError = """
-                    Theme Expansion isn’t available.
-                    """
+                    lastError = Self.unavailableMessage
                     #endif
                     return
                 }

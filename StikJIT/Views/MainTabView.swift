@@ -37,9 +37,13 @@ struct MainTabView: View {
                     .tabItem { Label("Home", systemImage: "house") }
                     .tag(0)
 
+                ConsoleLogsView()
+                    .tabItem { Label("Console", systemImage: "terminal") }
+                    .tag(1)
+
                 ScriptListView()
                     .tabItem { Label("Scripts", systemImage: "scroll") }
-                    .tag(1)
+                    .tag(2)
                 
                 DeviceInfoView()
                     .tabItem { Label("Device Info", systemImage: "info.circle.fill") }
