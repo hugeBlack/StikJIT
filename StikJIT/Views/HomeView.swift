@@ -66,7 +66,6 @@ struct HomeView: View {
     @AppStorage("pinnedSystemAppNames") private var pinnedSystemAppNames: [String: String] = [:]
     @State private var launchingSystemApps: Set<String> = []
     @State private var systemLaunchMessage: String? = nil
-    @State private var isRemountingDDI = false
     @State private var connectionCheckState: ConnectionCheckState = .idle
     @State private var connectionInfoMessage: String? = nil
     @State private var hasAutoStartedConnectionCheck = false
@@ -181,9 +180,6 @@ struct HomeView: View {
             refreshBackground()
             checkPairingFileExists()
             heartbeatOK = pubHeartBeat
-        }
-        .onReceive(mounting.$mountingThread.receive(on: RunLoop.main)) { thread in
-            isRemountingDDI = thread != nil
         }
         .onChange(of: pairingFileExists) { _, newValue in
             if newValue {
@@ -748,21 +744,6 @@ struct HomeView: View {
                 .font(.footnote)
                 .foregroundStyle(.secondary)
 
-            Button(action: remountDeveloperDiskImage) {
-                compactControlButton(
-                    icon: "externaldrive.badge.plus",
-                    title: isRemountingDDI ? "Remounting…" : "Remount DDI",
-                    showSpinner: isRemountingDDI
-                )
-            }
-            .buttonStyle(.plain)
-            .disabled(!pairingFileExists || isRemountingDDI)
-
-            if isRemountingDDI {
-                ProgressView(value: min(max(mounting.mountProgress / 100, 0), 1))
-                    .progressViewStyle(.linear)
-                    .tint(accentColor)
-            }
         }
     }
 
@@ -807,27 +788,6 @@ struct HomeView: View {
         if ddiMounted { return .green }
         if pairingFileLikelyInvalid { return .yellow }
         return .orange
-    }
-
-    private func remountDeveloperDiskImage() {
-        guard pairingFileExists else {
-            showAlert(
-                title: "Pairing File Required",
-                message: "Import a valid pairing file before mounting the Developer Disk Image.",
-                showOk: true
-            )
-            return
-        }
-        guard !isRemountingDDI else { return }
-        isRemountingDDI = true
-        DispatchQueue.global(qos: .userInitiated).async {
-            MountingProgress.shared.pubMount()
-            DispatchQueue.main.async {
-                if MountingProgress.shared.mountingThread == nil {
-                    isRemountingDDI = false
-                }
-            }
-        }
     }
 
     private func runConnectionDiagnostics(autoStart: Bool = false) {
