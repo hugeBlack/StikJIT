@@ -68,6 +68,8 @@ struct HomeView: View {
     @State private var connectionTimeoutTask: DispatchWorkItem? = nil
     @State private var wifiConnected = false
     @State private var wifiMonitor: NWPathMonitor? = nil
+    @State private var isCellularActive = false
+    @State private var cellularMonitor: NWPathMonitor? = nil
     @State private var isSchedulingInitialSetup = false
     @AppStorage("cachedAppNamesData") private var cachedAppNamesData: Data?
     @AppStorage("autoStartVPN") private var autoStartVPN = true
@@ -88,6 +90,9 @@ struct HomeView: View {
         !isValidatingPairingFile &&
         !ddiMounted &&
         !heartbeatOK
+    }
+    private var shouldPromptForWiFi: Bool {
+        pairingFileLikelyInvalid && !wifiConnected && isCellularActive
     }
 
     private let pairingFileURL = URL.documentsDirectory.appendingPathComponent("pairingFile.plist")
@@ -146,6 +151,7 @@ struct HomeView: View {
         .onAppear {
             scheduleInitialSetupWork()
             startWiFiMonitoring()
+            startCellularMonitoring()
             if autoStartVPN && tunnel.tunnelStatus == .disconnected {
                 TunnelManager.shared.startVPN()
             }
@@ -163,6 +169,7 @@ struct HomeView: View {
             connectionTimeoutTask?.cancel()
             connectionTimeoutTask = nil
             stopWiFiMonitoring()
+            stopCellularMonitoring()
             hasAutoStartedConnectionCheck = false
         }
         .onReceive(timer) { _ in
@@ -370,7 +377,13 @@ struct HomeView: View {
                     .font(.headline.weight(.semibold))
                     .foregroundStyle(.primary)
 
-                if primaryActionTitle == "New Pairing File Needed" {
+                if shouldPromptForWiFi {
+                    statusBadge(
+                        icon: "wifi.slash",
+                        text: "Wi-Fi required",
+                        color: .orange
+                    )
+                } else if pairingFileLikelyInvalid {
                     statusBadge(
                         icon: "xmark.octagon.fill",
                         text: "Pairing file expired",
@@ -515,6 +528,24 @@ struct HomeView: View {
         wifiMonitor = nil
     }
 
+    private func startCellularMonitoring() {
+        guard cellularMonitor == nil else { return }
+        let monitor = NWPathMonitor(requiredInterfaceType: .cellular)
+        cellularMonitor = monitor
+        monitor.pathUpdateHandler = { path in
+            DispatchQueue.main.async {
+                isCellularActive = path.status == .satisfied
+            }
+        }
+        monitor.start(queue: DispatchQueue.global(qos: .utility))
+    }
+
+    private func stopCellularMonitoring() {
+        cellularMonitor?.cancel()
+        cellularMonitor = nil
+        isCellularActive = false
+    }
+
     private var pairingStatusDescription: String {
         if isValidatingPairingFile { return "Validating pairing file…" }
         if pairingFileExists {
@@ -528,7 +559,7 @@ struct HomeView: View {
 
     private var wifiStatusDescription: String {
         if isConnectionCheckRunning { return "Checking Wi-Fi status…" }
-        return wifiConnected ? "Wi-Fi connected and ready." : "Connect to Wi-Fi on the same network as your trusted computer."
+        return wifiConnected ? "Wi-Fi connected and ready." : "Connect to Wi-Fi."
     }
 
     private var isConnectionCheckRunning: Bool {
@@ -736,6 +767,7 @@ struct HomeView: View {
     private var primaryActionTitle: String {
         if isValidatingPairingFile { return "Validating…" }
         if !pairingFileExists { return pairingFilePresentOnDisk ? "Import New Pairing File" : "Import Pairing File" }
+        if shouldPromptForWiFi { return "Connect to Wi-Fi" }
         if pairingFileLikelyInvalid { return "New Pairing File Needed" }
         if !ddiMounted { return "Mount Developer Disk Image" }
         return "Connect by App"
@@ -744,6 +776,7 @@ struct HomeView: View {
     private var primaryActionIcon: String {
         if isValidatingPairingFile { return "hourglass" }
         if !pairingFileExists { return pairingFilePresentOnDisk ? "arrow.clockwise" : "doc.badge.plus" }
+        if shouldPromptForWiFi { return "wifi.slash" }
         if pairingFileLikelyInvalid { return "arrow.clockwise" }
         if !ddiMounted { return "externaldrive" }
         return "cable.connector.horizontal"
@@ -1140,7 +1173,15 @@ struct HomeView: View {
     private func primaryActionTapped() {
         guard !isValidatingPairingFile else { return }
         if pairingFileLikelyInvalid {
-            isShowingPairingFilePicker = true
+            if shouldPromptForWiFi {
+                showAlert(
+                    title: "Wi-Fi Required",
+                    message: "Connect to Wi-Fi.",
+                    showOk: true
+                ) { _ in }
+            } else {
+                isShowingPairingFilePicker = true
+            }
             return
         }
         if pairingFileExists {
