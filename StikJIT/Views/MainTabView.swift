@@ -26,6 +26,10 @@ struct MainTabView: View {
         themeExpansion?.preferredColorScheme(for: appThemeRaw)
     }
 
+    private var isAppStoreBuild: Bool {
+        themeExpansion?.isAppStoreBuild ?? true
+    }
+
     var body: some View {
         ZStack {
             // Allow global themed background to show
@@ -64,44 +68,42 @@ struct MainTabView: View {
                 ZStack {
                     Color.black.opacity(0.001).ignoresSafeArea()
 
-                    VStack(spacing: 20) {
-                        Text("Update Required")
-                            .font(.title.bold())
-                            .multilineTextAlignment(.center)
+                    appGlassCard {
+                        VStack(spacing: 20) {
+                            Text("Update Required")
+                                .font(.title.bold())
+                                .multilineTextAlignment(.center)
 
-                        Text("A new version (\(latestVersion ?? "unknown")) is available. Please update to continue using the app.")
-                            .multilineTextAlignment(.center)
-                            .font(.callout)
-                            .foregroundColor(.secondary)
-                            .padding(.horizontal)
+                            Text("A new version (\(latestVersion ?? "unknown")) is available. Please update to continue using the app.")
+                                .multilineTextAlignment(.center)
+                                .font(.callout)
+                                .foregroundColor(.secondary)
+                                .padding(.horizontal)
 
-                        Button(action: {
-                            if let url = URL(string: "itms-apps://itunes.apple.com/app/id6744045754") {
-                                UIApplication.shared.open(url)
+                            Button(action: {
+                                let urlString: String
+                                if isAppStoreBuild {
+                                    urlString = "itms-apps://itunes.apple.com/app/id6744045754"
+                                } else {
+                                    urlString = "altstore://source?url=https://StikDebug.xyz/apps.json"
+                                }
+                                if let url = URL(string: urlString) {
+                                    UIApplication.shared.open(url)
+                                }
+                            }) {
+                                Text("Update Now")
+                                    .font(.headline.weight(.semibold))
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 12)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                            .fill(Color.accentColor)
+                                    )
+                                    .foregroundColor(.white)
                             }
-                        }) {
-                            Text("Update Now")
-                                .font(.headline.weight(.semibold))
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 12)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                        .fill(Color.accentColor)
-                                )
-                                .foregroundColor(.black)
+                            .padding(.top, 10)
                         }
-                        .padding(.top, 10)
                     }
-                    .padding(24)
-                    .background(
-                        RoundedRectangle(cornerRadius: 20, style: .continuous)
-                            .fill(.ultraThinMaterial)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 20, style: .continuous)
-                                    .strokeBorder(Color.white.opacity(0.15), lineWidth: 1)
-                            )
-                    )
-                    .shadow(color: .black.opacity(0.15), radius: 12, x: 0, y: 4)
                     .padding(.horizontal, 40)
                 }
                 .transition(.opacity.combined(with: .scale))
