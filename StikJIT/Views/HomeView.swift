@@ -70,7 +70,6 @@ struct HomeView: View {
     @State private var connectionInfoMessage: String? = nil
     @State private var hasAutoStartedConnectionCheck = false
     @State private var connectionTimeoutTask: DispatchWorkItem? = nil
-    @State private var statusInfoType: StatusLightType? = nil
     @State private var wifiConnected = false
     @State private var wifiMonitor: NWPathMonitor? = nil
     @State private var isSchedulingInitialSetup = false
@@ -462,58 +461,91 @@ struct HomeView: View {
             .foregroundStyle(color)
     }
 
-    private var allStatusIndicatorsGreen: Bool {
-        pairingIndicatorStatus == .success &&
-        wifiIndicatorStatus == .success &&
-        heartbeatIndicatorStatus == .success
-    }
-
     private var connectionHasError: Bool {
         if case .failure = connectionCheckState { return true }
         if case .timeout = connectionCheckState { return true }
         return false
     }
 
-    private var statusLightsRow: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 12) {
-                ForEach(statusLights) { light in
-                    Button {
-                        handleStatusTap(light.type)
-                    } label: {
-                        StatusLightView(light: light)
-                            .overlay(
-                                Circle()
-                                    .strokeBorder(statusInfoType == light.type ? accentColor : .clear, lineWidth: 1.5)
-                            )
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
+    private var allStatusIndicatorsGreen: Bool {
+        pairingIndicatorStatus == .success &&
+        ddiIndicatorStatus == .success &&
+        wifiIndicatorStatus == .success &&
+        heartbeatIndicatorStatus == .success
+    }
 
-            if let info = statusInfoText {
-                Text(info)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .transition(.opacity)
+    private var statusLightsRow: some View {
+        HStack(spacing: 12) {
+            ForEach(statusLights) { light in
+                StatusLightView(light: light)
             }
         }
-        .animation(.easeInOut(duration: 0.2), value: statusInfoType)
     }
 
     private var statusLights: [StatusLightData] {
         [
-            StatusLightData(type: .pairing, icon: "doc.badge.plus", color: color(for: pairingIndicatorStatus), label: pairingLightLabel),
-            StatusLightData(type: .wifi, icon: "wifi", color: color(for: wifiIndicatorStatus), label: "Wi-Fi status"),
-            StatusLightData(type: .heartbeat, icon: "waveform.path.ecg", color: color(for: heartbeatIndicatorStatus), label: "Heartbeat status")
+            StatusLightData(
+                type: .pairing,
+                title: "Pairing",
+                icon: "doc.badge.plus",
+                status: pairingIndicatorStatus,
+                detail: pairingDetailText
+            ),
+            StatusLightData(
+                type: .ddi,
+                title: "DDI",
+                icon: "externaldrive",
+                status: ddiIndicatorStatus,
+                detail: ddiDetailText
+            ),
+            StatusLightData(
+                type: .wifi,
+                title: "Wi-Fi",
+                icon: "wifi",
+                status: wifiIndicatorStatus,
+                detail: wifiDetailText
+            ),
+            StatusLightData(
+                type: .heartbeat,
+                title: "Heartbeat",
+                icon: "waveform.path.ecg",
+                status: heartbeatIndicatorStatus,
+                detail: heartbeatDetailText
+            )
         ]
     }
 
-    private var pairingLightLabel: String {
-        if isValidatingPairingFile { return "Validating pairing file" }
-        if pairingFileExists { return "Pairing file ready" }
-        if pairingFilePresentOnDisk { return "Pairing file unreadable" }
-        return "Pairing file missing"
+    private var pairingDetailText: String {
+        if isValidatingPairingFile { return "Validating…" }
+        if pairingFileExists { return "Ready" }
+        if pairingFilePresentOnDisk { return "Unreadable" }
+        return "Missing"
+    }
+
+    private var ddiDetailText: String {
+        if ddiMounted { return "Mounted" }
+        if pairingFileLikelyInvalid { return "Needs pairing" }
+        return pairingFileExists ? "Mount required" : "Not ready"
+    }
+
+    private var wifiDetailText: String {
+        if isConnectionCheckRunning { return "Checking…" }
+        return wifiConnected ? "Connected" : "Offline"
+    }
+
+    private var heartbeatDetailText: String {
+        if heartbeatOK { return "Active" }
+        if pairingFileExists {
+            return tunnel.tunnelStatus == .connected ? "Waiting" : "VPN required"
+        }
+        return "Pair first"
+    }
+
+    private var ddiIndicatorStatus: StartupIndicatorStatus {
+        if ddiMounted { return .success }
+        if pairingFileLikelyInvalid { return .warning }
+        if pairingFileExists { return .warning }
+        return .idle
     }
 
     private func color(for indicator: StartupIndicatorStatus) -> Color {
@@ -535,18 +567,6 @@ struct HomeView: View {
     private func stopWiFiMonitoring() {
         wifiMonitor?.cancel()
         wifiMonitor = nil
-    }
-
-    private var statusInfoText: String? {
-        guard let type = statusInfoType else { return nil }
-        switch type {
-        case .pairing:
-            return pairingStatusDescription
-        case .wifi:
-            return wifiStatusDescription
-        case .heartbeat:
-            return heartbeatSubtitle
-        }
     }
 
     private var pairingStatusDescription: String {
@@ -585,14 +605,6 @@ struct HomeView: View {
             return "VPN is off. Connect before running diagnostics."
         case .error:
             return "VPN configuration error. Try reconnecting."
-        }
-    }
-
-    private func handleStatusTap(_ type: StatusLightType) {
-        if statusInfoType == type {
-            statusInfoType = nil
-        } else {
-            statusInfoType = type
         }
     }
 
@@ -1635,33 +1647,61 @@ private struct StatusLightView: View {
     let light: StatusLightData
 
     var body: some View {
-        ZStack {
-            Circle()
-                .fill(light.color.opacity(0.2))
-                .frame(width: 42, height: 42)
-            Image(systemName: light.icon)
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(light.color)
+        VStack(spacing: 6) {
+            ZStack {
+                Circle()
+                    .fill(light.status.tint.opacity(0.18))
+                    .frame(width: 48, height: 48)
+                Image(systemName: light.icon)
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(light.status.tint)
+            }
+            .overlay(
+                Circle()
+                    .stroke(Color.white.opacity(0.12), lineWidth: 0.5)
+                    .frame(width: 48, height: 48)
+            )
+            .overlay(alignment: .bottomTrailing) {
+                Image(systemName: light.status.iconName)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(light.status.symbolColor)
+                    .padding(4)
+                    .background(
+                        Circle()
+                            .fill(Color(.systemBackground))
+                            .shadow(color: .black.opacity(0.12), radius: 1.5, x: 0, y: 1)
+                    )
+                    .offset(x: 6, y: 6)
+            }
+
+            VStack(spacing: 0) {
+                Text(light.title)
+                    .font(.caption2.weight(.semibold))
+                Text(light.detail)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+            }
+            .frame(width: 80)
         }
-        .overlay(
-            Circle()
-                .stroke(Color.white.opacity(0.12), lineWidth: 0.5)
-        )
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(light.label)
+        .accessibilityLabel("\(light.title) status")
+        .accessibilityValue("\(light.detail). \(light.status.accessibilityDescription)")
     }
 }
 
 private struct StatusLightData: Identifiable {
     let id = UUID()
     let type: StatusLightType
+    let title: String
     let icon: String
-    let color: Color
-    let label: String
+    let status: StartupIndicatorStatus
+    let detail: String
 }
 
 private enum StatusLightType {
     case pairing
+    case ddi
     case wifi
     case heartbeat
 }
@@ -1703,6 +1743,26 @@ private enum StartupIndicatorStatus: Equatable {
         case .error: return .red
         case .idle: return .secondary
         case .running: return .orange
+        }
+    }
+
+    var symbolColor: Color {
+        switch self {
+        case .success: return .green
+        case .warning: return .orange
+        case .error: return .red
+        case .idle: return .secondary
+        case .running: return .blue
+        }
+    }
+
+    var accessibilityDescription: String {
+        switch self {
+        case .success: return "Success"
+        case .warning: return "Warning"
+        case .error: return "Error"
+        case .idle: return "Idle"
+        case .running: return "In progress"
         }
     }
 }
