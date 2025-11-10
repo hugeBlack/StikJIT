@@ -55,6 +55,10 @@ struct ConsoleLogsView: View {
                     .ignoresSafeArea()
 
                 VStack(spacing: 0) {
+                    if selectedConsoleTab == .syslog {
+                        syslogBetaTag
+                    }
+
                     Group {
                         if selectedConsoleTab == .idevice {
                             jitLogsPane
@@ -413,6 +417,37 @@ struct ConsoleLogsView: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
+    }
+
+    private var syslogBetaTag: some View {
+        HStack(spacing: 10) {
+            Label {
+                Text("Syslogs")
+                    .font(.headline.weight(.semibold))
+            } icon: {
+                Image(systemName: "waveform.path.ecg")
+                    .foregroundColor(accentColor)
+            }
+
+            Text("BETA")
+                .font(.caption2.weight(.bold))
+                .padding(.horizontal, 10)
+                .padding(.vertical, 4)
+                .foregroundColor(accentColor)
+                .background(
+                    Capsule()
+                        .fill(accentColor.opacity(colorScheme == .dark ? 0.22 : 0.12))
+                )
+                .overlay(
+                    Capsule()
+                        .stroke(accentColor.opacity(0.45), lineWidth: 1)
+                )
+
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 16)
+        .padding(.bottom, 8)
+        .transition(.opacity)
     }
 
     @ViewBuilder
