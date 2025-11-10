@@ -403,8 +403,6 @@ struct HomeView: View {
                 statusLightsRow
 
                 vpnControls
-                
-                ddiControls
 
             }
         }
@@ -416,6 +414,14 @@ struct HomeView: View {
                 Text("Connect")
                     .font(.headline.weight(.semibold))
                     .foregroundStyle(.primary)
+
+                if primaryActionTitle == "New Pairing File Needed" {
+                    statusBadge(
+                        icon: "xmark.octagon.fill",
+                        text: "Pairing file expired",
+                        color: .red
+                    )
+                }
 
                 primaryActionControls
 
@@ -468,7 +474,6 @@ struct HomeView: View {
     }
 
     private var allStatusIndicatorsGreen: Bool {
-        pairingIndicatorStatus == .success &&
         ddiIndicatorStatus == .success &&
         wifiIndicatorStatus == .success &&
         heartbeatIndicatorStatus == .success
@@ -484,13 +489,6 @@ struct HomeView: View {
 
     private var statusLights: [StatusLightData] {
         [
-            StatusLightData(
-                type: .pairing,
-                title: "Pairing",
-                icon: "doc.badge.plus",
-                status: pairingIndicatorStatus,
-                detail: pairingDetailText
-            ),
             StatusLightData(
                 type: .ddi,
                 title: "DDI",
@@ -515,16 +513,9 @@ struct HomeView: View {
         ]
     }
 
-    private var pairingDetailText: String {
-        if isValidatingPairingFile { return "Validating…" }
-        if pairingFileExists { return "Ready" }
-        if pairingFilePresentOnDisk { return "Unreadable" }
-        return "Missing"
-    }
-
     private var ddiDetailText: String {
         if ddiMounted { return "Mounted" }
-        if pairingFileLikelyInvalid { return "Needs pairing" }
+        if pairingFileLikelyInvalid { return "Error" }
         return pairingFileExists ? "Mount required" : "Not ready"
     }
 
@@ -540,7 +531,7 @@ struct HomeView: View {
         }
         return "Pair first"
     }
-
+    
     private var ddiIndicatorStatus: StartupIndicatorStatus {
         if ddiMounted { return .success }
         if pairingFileLikelyInvalid { return .warning }
@@ -625,13 +616,6 @@ struct HomeView: View {
     private var wifiIndicatorStatus: StartupIndicatorStatus {
         if isConnectionCheckRunning { return .running }
         return wifiConnected ? .success : .warning
-    }
-
-    private var pairingIndicatorStatus: StartupIndicatorStatus {
-        if isValidatingPairingFile { return .running }
-        if pairingFileExists { return .success }
-        if pairingFilePresentOnDisk || pairingFileLikelyInvalid { return .warning }
-        return .error
     }
 
     private var heartbeatSubtitle: String {
@@ -733,27 +717,6 @@ struct HomeView: View {
         }
     }
 
-    private var ddiControls: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Text("Developer Disk Image")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.primary)
-                Spacer()
-                statusBadge(
-                    icon: ddiMounted ? "externaldrive.fill.badge.checkmark" : "externaldrive.badge.exclamationmark",
-                    text: ddiMounted ? "Mounted" : "Not Mounted",
-                    color: ddiStatusColor
-                )
-            }
-
-            Text(ddiStatusDescription)
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-
-        }
-    }
-
     private var vpnStatusColor: Color {
         switch tunnel.tunnelStatus {
         case .connected: return .green
@@ -779,22 +742,6 @@ struct HomeView: View {
         default:
             return false
         }
-    }
-
-    private var ddiStatusDescription: String {
-        if ddiMounted {
-            return "Mounted successfully and ready for debugging."
-        }
-        if pairingFileLikelyInvalid {
-            return "We can’t mount until a valid pairing file is imported."
-        }
-        return "Mount the Developer Disk Image before enabling JIT."
-    }
-
-    private var ddiStatusColor: Color {
-        if ddiMounted { return .green }
-        if pairingFileLikelyInvalid { return .yellow }
-        return .orange
     }
 
     private func runConnectionDiagnostics(autoStart: Bool = false) {
@@ -834,7 +781,7 @@ struct HomeView: View {
     private var primaryActionTitle: String {
         if isValidatingPairingFile { return "Validating…" }
         if !pairingFileExists { return pairingFilePresentOnDisk ? "Import New Pairing File" : "Import Pairing File" }
-        if pairingFileLikelyInvalid { return "Import New Pairing File" }
+        if pairingFileLikelyInvalid { return "New Pairing File Needed" }
         if !ddiMounted { return "Mount Developer Disk Image" }
         return "Connect by App"
     }
@@ -1331,6 +1278,7 @@ struct HomeView: View {
         return lastSignature != signature
     }
 
+
     private func pairingFileSignature(for url: URL) -> PairingFileSignature {
         let attributes = (try? FileManager.default.attributesOfItem(atPath: url.path)) ?? [:]
         let modificationDate = attributes[.modificationDate] as? Date
@@ -1700,7 +1648,6 @@ private struct StatusLightData: Identifiable {
 }
 
 private enum StatusLightType {
-    case pairing
     case ddi
     case wifi
     case heartbeat
