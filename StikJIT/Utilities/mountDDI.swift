@@ -47,6 +47,10 @@ func htons(_ value: UInt16) -> UInt16 {
 }
 
 func isMounted() -> Bool {
+    guard TunnelManager.shared.tunnelStatus == .connected else {
+        return false
+    }
+    
     var addr = sockaddr_in()
     memset(&addr, 0, MemoryLayout<sockaddr_in>.size)
     addr.sin_family = sa_family_t(AF_INET)

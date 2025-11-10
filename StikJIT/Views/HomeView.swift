@@ -86,7 +86,7 @@ struct HomeView: View {
         themeExpansion?.resolvedAccentColor(from: customAccentColorHex) ?? .blue
     }
 
-    private var ddiMounted: Bool { isMounted() }
+    private var ddiMounted: Bool { mounting.coolisMounted }
     private var canConnectByApp: Bool { pairingFileExists && ddiMounted }
     private var pairingFileLikelyInvalid: Bool {
         (pairingFileExists || pairingFilePresentOnDisk) &&
@@ -119,6 +119,7 @@ struct HomeView: View {
                     .padding(.horizontal, 20)
                     .padding(.vertical, 30)
                 }
+                .scrollIndicators(.hidden)
 
                 if isImportingFile {
                     Color.black.opacity(0.35).ignoresSafeArea()
@@ -154,6 +155,9 @@ struct HomeView: View {
             refreshBackground()
             loadAppListIfNeeded()
             startWiFiMonitoring()
+            if tunnel.tunnelStatus == .connected {
+                MountingProgress.shared.checkforMounted()
+            }
             if autoStartVPN && tunnel.tunnelStatus == .disconnected {
                 TunnelManager.shared.startVPN()
             }
@@ -191,7 +195,9 @@ struct HomeView: View {
         }
         .onChange(of: tunnel.tunnelStatus) { _, newStatus in
             if newStatus == .connected {
+                loadAppListIfNeeded(force: cachedAppNames.isEmpty)
                 runConnectionDiagnostics()
+                MountingProgress.shared.checkforMounted()
             }
         }
         .onChange(of: favoriteApps) { _, _ in
@@ -1110,6 +1116,8 @@ struct HomeView: View {
             cachedAppNamesData = nil
             return
         }
+
+        guard tunnel.tunnelStatus == .connected else { return }
 
         if !force && !cachedAppNames.isEmpty { return }
 

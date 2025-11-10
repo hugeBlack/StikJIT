@@ -227,6 +227,9 @@ class TunnelManager: ObservableObject {
                 self.tunnelStatus = .error
             }
             VPNLogger.shared.log("VPN status updated: \(self.tunnelStatus.rawValue)")
+            if connectionStatus == .connected && heartbeatStartPending {
+                startHeartbeatInBackground()
+            }
         }
     }
     
@@ -295,8 +298,8 @@ class TunnelManager: ObservableObject {
     }
     
     private func startExistingVPN(manager: NETunnelProviderManager) {
-        guard tunnelStatus != .connected else {
-            VPNLogger.shared.log("Network tunnel is already connected")
+        guard tunnelStatus == .disconnected || tunnelStatus == .error else {
+            VPNLogger.shared.log("Ignoring VPN start; current status: \(tunnelStatus.rawValue)")
             return
         }
         tunnelStatus = .connecting
@@ -483,12 +486,15 @@ class DNSChecker: ObservableObject {
 
 // Global state variable for the heartbeat response.
 var pubHeartBeat = false
+private var heartbeatStartPending = false
+private var heartbeatStartInProgress = false
 
 @main
 struct HeartbeatApp: App {
     @AppStorage("hasLaunchedBefore") var hasLaunchedBefore: Bool = false
     @AppStorage("customAccentColor") private var customAccentColorHex: String = ""
     @AppStorage("appTheme") private var appThemeRaw: String = AppTheme.system.rawValue
+    @AppStorage("autoStartVPN") private var autoStartVPN = true
     @State private var showWelcomeSheet: Bool = false
     @State private var show_alert = false
     @State private var alert_string = ""
@@ -551,6 +557,14 @@ struct HeartbeatApp: App {
         }
     }
     
+    private func triggerAutoVPNStartIfNeeded() {
+        guard autoStartVPN else { return }
+        let manager = TunnelManager.shared
+        if manager.tunnelStatus == .disconnected || manager.tunnelStatus == .error {
+            manager.startVPN()
+        }
+    }
+    
     private var globalAccent: Color {
         themeExpansionManager.resolvedAccentColor(from: customAccentColorHex)
     }
@@ -599,7 +613,7 @@ struct HeartbeatApp: App {
                 if !hasLaunchedBefore {
                     showWelcomeSheet = true
                 } else {
-                    TunnelManager.shared.startVPN()
+                    triggerAutoVPNStartIfNeeded()
                 }
                 HeartbeatApp.updateUIKitTint(customHex: customAccentColorHex,
                                              hasAccess: themeExpansionManager.hasThemeExpansion)
@@ -613,10 +627,10 @@ struct HeartbeatApp: App {
             }
             .sheet(isPresented: $showWelcomeSheet) {
                 WelcomeSheetView {
-                    // When the user taps "Continue", mark the app as launched and start the VPN.
+                    // When the user taps "Continue", mark the app as launched and start the VPN if allowed.
                     hasLaunchedBefore = true
                     showWelcomeSheet = false
-                    TunnelManager.shared.startVPN()
+                    triggerAutoVPNStartIfNeeded()
                 }
             }
         }
@@ -653,8 +667,11 @@ class MountingProgress: ObservableObject {
     @Published var coolisMounted: Bool = false
     
     func checkforMounted() {
-        DispatchQueue.main.async {
-            self.coolisMounted = isMounted()
+        DispatchQueue.global(qos: .utility).async {
+            let mounted = isMounted()
+            DispatchQueue.main.async {
+                self.coolisMounted = mounted
+            }
         }
     }
     
@@ -671,10 +688,21 @@ class MountingProgress: ObservableObject {
     }
     
     private func mount() {
-        self.coolisMounted = isMounted()
+        guard TunnelManager.shared.tunnelStatus == .connected else {
+            DispatchQueue.main.async {
+                self.coolisMounted = false
+                self.mountingThread = nil
+            }
+            return
+        }
+        
+        let currentlyMounted = isMounted()
+        DispatchQueue.main.async {
+            self.coolisMounted = currentlyMounted
+        }
         let pairingpath = URL.documentsDirectory.appendingPathComponent("pairingFile.plist").path
         
-        if isPairing(), !isMounted() {
+        if isPairing(), !currentlyMounted {
             if let mountingThread = mountingThread {
                 mountingThread.cancel()
                 self.mountingThread = nil
@@ -697,7 +725,8 @@ class MountingProgress: ObservableObject {
                             }
                         }
                     } else {
-                        self.coolisMounted = isMounted()
+                        self.coolisMounted = true
+                        self.checkforMounted()
                     }
                     self.mountingThread = nil
                 }
@@ -724,8 +753,37 @@ func isPairing() -> Bool {
     return true
 }
 
-func startHeartbeatInBackground() {
+func startHeartbeatInBackground(requireVPNConnection: Bool = true) {
+    assert(Thread.isMainThread, "startHeartbeatInBackground must be called on the main thread")
+    let pairingFileURL = URL.documentsDirectory.appendingPathComponent("pairingFile.plist")
+    
+    guard FileManager.default.fileExists(atPath: pairingFileURL.path) else {
+        heartbeatStartPending = false
+        return
+    }
+    
+    let vpnConnected = TunnelManager.shared.tunnelStatus == .connected
+    if requireVPNConnection && !vpnConnected {
+        if !heartbeatStartPending {
+            print("Heartbeat start deferred until VPN connects")
+        }
+        heartbeatStartPending = true
+        return
+    }
+    
+    guard !heartbeatStartInProgress else {
+        return
+    }
+    
+    heartbeatStartPending = false
+    heartbeatStartInProgress = true
+    
     let heartBeatThread = Thread {
+        defer {
+            DispatchQueue.main.async {
+                heartbeatStartInProgress = false
+            }
+        }
         let completionHandler: @convention(block) (Int32, String?) -> Void = { result, message in
             if result == 0 {
                 print("Heartbeat started successfully: \(message ?? "")")
@@ -762,7 +820,9 @@ func startHeartbeatInBackground() {
                             showTryAgain: true
                         ) { shouldTryAgain in
                             if shouldTryAgain {
-                                startHeartbeatInBackground()
+                                DispatchQueue.main.async {
+                                    startHeartbeatInBackground()
+                                }
                             }
                         }
                     }
