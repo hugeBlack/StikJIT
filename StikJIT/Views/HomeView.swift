@@ -73,6 +73,7 @@ struct HomeView: View {
     @State private var statusInfoType: StatusLightType? = nil
     @State private var wifiConnected = false
     @State private var wifiMonitor: NWPathMonitor? = nil
+    @State private var isSchedulingInitialSetup = false
     @AppStorage("cachedAppNamesData") private var cachedAppNamesData: Data?
     @AppStorage("autoStartVPN") private var autoStartVPN = true
 
@@ -149,14 +150,8 @@ struct HomeView: View {
         }
         .preferredColorScheme(preferredScheme)
         .onAppear {
-            restoreCachedAppNamesIfAvailable()
-            checkPairingFileExists()
-            refreshBackground()
-            loadAppListIfNeeded()
+            scheduleInitialSetupWork()
             startWiFiMonitoring()
-            if tunnel.tunnelStatus == .connected {
-                MountingProgress.shared.checkforMounted()
-            }
             if autoStartVPN && tunnel.tunnelStatus == .disconnected {
                 TunnelManager.shared.startVPN()
             }
@@ -1070,6 +1065,37 @@ struct HomeView: View {
         return s.isEmpty ? name : s
     }
 
+    private func scheduleInitialSetupWork() {
+        guard !isSchedulingInitialSetup else { return }
+        isSchedulingInitialSetup = true
+
+        let shouldRestoreCache = cachedAppNames.isEmpty
+        let cachedData = cachedAppNamesData
+
+        DispatchQueue.global(qos: .userInitiated).async {
+            var restoredApps: [String: String]? = nil
+            if shouldRestoreCache, let cachedData {
+                restoredApps = try? JSONDecoder().decode([String: String].self, from: cachedData)
+            }
+
+            DispatchQueue.main.async {
+                defer { isSchedulingInitialSetup = false }
+
+                if let restoredApps, cachedAppNames.isEmpty {
+                    cachedAppNames = restoredApps
+                }
+
+                refreshBackground()
+                checkPairingFileExists()
+                loadAppListIfNeeded()
+
+                if tunnel.tunnelStatus == .connected {
+                    MountingProgress.shared.checkforMounted()
+                }
+            }
+        }
+    }
+
     private func loadAppListIfNeeded(force: Bool = false) {
         guard pairingFileExists else {
             cachedAppNames = [:]
@@ -1088,13 +1114,6 @@ struct HomeView: View {
                 cachedAppNames = result
                 cachedAppNamesData = encoded
             }
-        }
-    }
-
-    private func restoreCachedAppNamesIfAvailable() {
-        guard cachedAppNames.isEmpty, let data = cachedAppNamesData else { return }
-        if let decoded = try? JSONDecoder().decode([String: String].self, from: data) {
-            cachedAppNames = decoded
         }
     }
 
