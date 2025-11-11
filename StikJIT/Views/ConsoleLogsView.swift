@@ -156,6 +156,7 @@ struct ConsoleLogsView: View {
                 }
             )
         }
+        .navigationViewStyle(.stack)
         .preferredColorScheme(preferredScheme)
         .onAppear {
             startHeartbeatInBackground()
