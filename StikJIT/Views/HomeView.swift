@@ -255,7 +255,8 @@ struct HomeView: View {
                 var autoScriptData: Data? = nil
                 var autoScriptName: String? = nil
                 
-                if let scriptInfo = autoScript(for: selectedBundle) {
+                if !hasAssignedScript(for: selectedBundle),
+                   let scriptInfo = autoScript(for: selectedBundle) {
                     autoScriptData = scriptInfo.data
                     autoScriptName = scriptInfo.name
                 }
@@ -313,6 +314,7 @@ struct HomeView: View {
                     config.scriptName = scriptName
                 }
                 if config.scriptData == nil, let bundleID = config.bundleID,
+                   !hasAssignedScript(for: bundleID),
                    let scriptInfo = autoScript(for: bundleID) {
                     config.scriptData = scriptInfo.data
                     config.scriptName = scriptInfo.name
@@ -1259,6 +1261,16 @@ struct HomeView: View {
         return PairingFileSignature(modificationDate: modificationDate, fileSize: sizeValue)
     }
     private func refreshBackground() { }
+    
+    private func hasAssignedScript(for bundleID: String) -> Bool {
+        guard enableAdvancedOptions else { return false }
+        guard let mapping = UserDefaults.standard.dictionary(forKey: "BundleScriptMap") as? [String: String],
+              let scriptName = mapping[bundleID] else { return false }
+        let scriptsDirectory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("scripts")
+        let scriptURL = scriptsDirectory.appendingPathComponent(scriptName)
+        return FileManager.default.fileExists(atPath: scriptURL.path)
+    }
     
     private func autoScript(for bundleID: String) -> (data: Data, name: String)? {
         guard ProcessInfo.processInfo.hasTXM else { return nil }
