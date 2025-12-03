@@ -359,17 +359,25 @@ struct ProfileView: View {
     }
     
     func loadProfiles() async {
-        working = true
+        await MainActor.run { working = true }
         do {
-            let profileDatas = try JITEnableContext.shared.fetchAllProfiles()
-            self.profiles = profileDatas.map { Profile(data: $0) }
+            let profileDatas = try await Task.detached(priority: .userInitiated) {
+                try JITEnableContext.shared.fetchAllProfiles()
+            }.value
+            let parsedProfiles = profileDatas.map { Profile(data: $0) }
+            await MainActor.run {
+                self.profiles = parsedProfiles
+                self.working = false
+            }
         } catch {
-            alertMsg = error.localizedDescription
-            alertTitle = "Failed to Fetch Profiles"
-            alertSuccess = false
-            alert = true
+            await MainActor.run {
+                alertMsg = error.localizedDescription
+                alertTitle = "Failed to Fetch Profiles"
+                alertSuccess = false
+                alert = true
+                working = false
+            }
         }
-        working = false
     }
     
     func saveProfile(profile: Profile) {

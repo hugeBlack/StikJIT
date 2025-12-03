@@ -3,7 +3,14 @@ import Foundation
 enum TabConfiguration {
     static let storageKey = "enabledTabIdentifiers"
     static let maxSelectableTabs = 4
-    static let allowedIDs: [String] = ["home", "console", "scripts", "profiles", "processes", "deviceinfo", "location"]
+    private static let baseAllowedIDs: [String] = ["home", "console", "scripts", "profiles", "processes", "deviceinfo"]
+    static var allowedIDs: [String] {
+        var ids = baseAllowedIDs
+        if FeatureFlags.isLocationSpoofingEnabled {
+            ids.append("location")
+        }
+        return ids
+    }
     static let defaultIDs: [String] = ["home", "console", "scripts", "profiles"]
     static let defaultRawValue = serialize(defaultIDs)
     

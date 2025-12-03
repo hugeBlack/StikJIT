@@ -94,7 +94,7 @@ struct SettingsView: View {
             TabOption(id: "processes", title: "Processes", detail: "Inspect running apps", icon: "rectangle.stack.person.crop", isBeta: true),
             TabOption(id: "deviceinfo", title: "Device Info", detail: "View detailed device metadata", icon: "iphone.and.arrow.forward", isBeta: false)
         ]
-        if !isAppStoreBuild {
+        if FeatureFlags.isLocationSpoofingEnabled && !isAppStoreBuild {
             options.append(TabOption(id: "location", title: "Location Sim", detail: "Sideload only", icon: "location", isBeta: true))
         }
         return options

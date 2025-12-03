@@ -61,7 +61,7 @@ struct MainTabView: View {
     
     private var availableTabs: [TabDescriptor] {
         configurableTabs.filter { descriptor in
-            descriptor.id != "location" || !isAppStoreBuild
+            descriptor.id != "location" || (FeatureFlags.isLocationSpoofingEnabled && !isAppStoreBuild)
         }
     }
     
