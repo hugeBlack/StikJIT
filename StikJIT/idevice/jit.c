@@ -18,7 +18,11 @@
 
 #include "jit.h"
 
-void runDebugServerCommand(int pid, DebugProxyHandle* debug_proxy, LogFuncC logger, DebugAppCallback callback) {
+void runDebugServerCommand(int pid,
+                           DebugProxyHandle* debug_proxy,
+                           RemoteServerHandle* remote_server,
+                           LogFuncC logger,
+                           DebugAppCallback callback) {
     // enable QStartNoAckMode
     char *disableResponse = NULL;
     debug_proxy_send_ack(debug_proxy);
@@ -32,7 +36,7 @@ void runDebugServerCommand(int pid, DebugProxyHandle* debug_proxy, LogFuncC logg
     
     if(callback) {
         dispatch_semaphore_t semaphore = dispatch_semaphore_create(0);
-        callback(pid, debug_proxy, semaphore);
+        callback(pid, debug_proxy, remote_server, semaphore);
         dispatch_semaphore_wait(semaphore, DISPATCH_TIME_FOREVER);
         err = debug_proxy_send_raw(debug_proxy, "\x03", 1);
         usleep(500);
@@ -193,7 +197,7 @@ int debug_app(IdeviceProviderHandle* tcp_provider, const char *bundle_id, LogFun
       return 1;
     }
     
-    runDebugServerCommand((int)pid, debug_proxy, logger, callback);
+    runDebugServerCommand((int)pid, debug_proxy, remote_server, logger, callback);
     
     /*****************************************************************
      * Cleanup
@@ -296,7 +300,7 @@ int debug_app_pid(IdeviceProviderHandle* tcp_provider, int pid, LogFuncC logger,
     }
     
     
-    runDebugServerCommand(pid, debug_proxy, logger, callback);
+    runDebugServerCommand(pid, debug_proxy, remote_server, logger, callback);
     
     /*****************************************************************
      * Cleanup

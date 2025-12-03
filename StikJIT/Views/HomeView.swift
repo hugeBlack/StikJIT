@@ -1361,8 +1361,11 @@ struct HomeView: View {
     }
     
     private func getJsCallback(_ script: Data, name: String? = nil) -> DebugAppCallback {
-        return { pid, debugProxyHandle, semaphore in
-            jsModel = RunJSViewModel(pid: Int(pid), debugProxy: debugProxyHandle, semaphore: semaphore)
+        return { pid, debugProxyHandle, remoteServerHandle, semaphore in
+            jsModel = RunJSViewModel(pid: Int(pid),
+                                     debugProxy: debugProxyHandle,
+                                     remoteServer: remoteServerHandle,
+                                     semaphore: semaphore)
             scriptViewShow = true
             DispatchQueue.global(qos: .background).async {
                 do { try jsModel?.runScript(data: script, name: name) }
