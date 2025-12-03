@@ -33,6 +33,11 @@ struct SettingsView: View {
     @State private var showRemovePairingFileDialog = false
     @State private var is_lc = false
     @State private var showColorPickerPopup = false
+    @State private var showDDIConfirmation = false
+    @State private var isRedownloadingDDI = false
+    @State private var ddiDownloadProgress: Double = 0.0
+    @State private var ddiStatusMessage: String = ""
+    @State private var ddiResultMessage: (text: String, isError: Bool)?
 
     @State private var showingDisplayView = false
     
@@ -201,6 +206,14 @@ struct SettingsView: View {
                 print("Failed to import file: \(error)")
             }
         }
+        .confirmationDialog("Redownload DDI Files?", isPresented: $showDDIConfirmation, titleVisibility: .visible) {
+            Button("Redownload", role: .destructive) {
+                redownloadDDIPressed()
+            }
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            Text("Existing DDI files will be removed before downloading fresh copies.")
+        }
     }
     
     // MARK: - Cards
@@ -358,6 +371,13 @@ struct SettingsView: View {
                     enableTesting = false
                 }
             }
+            .onChange(of: enableContinuedProcessing) { _, newValue in
+                if newValue {
+                    ContinuedProcessingManager.shared.configureIfNeeded()
+                } else {
+                    ContinuedProcessingManager.shared.cancelPendingTasks()
+                }
+            }
         }
     }
         
@@ -399,7 +419,7 @@ struct SettingsView: View {
                     }
                     .padding(.vertical, 8)
                 }
-                Button(action: { redownloadDDIPressed() }) {
+                Button(action: { showDDIConfirmation = true }) {
                     HStack {
                         Image(systemName: "arrow.down.circle")
                             .font(.system(size: 18))
@@ -409,6 +429,22 @@ struct SettingsView: View {
                         Spacer()
                     }
                     .padding(.vertical, 8)
+                }
+                .disabled(isRedownloadingDDI)
+                
+                if isRedownloadingDDI {
+                    VStack(alignment: .leading, spacing: 6) {
+                        ProgressView(value: ddiDownloadProgress, total: 1.0)
+                            .progressViewStyle(.linear)
+                            .tint(accentColor)
+                        Text(ddiStatusMessage)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                } else if let result = ddiResultMessage {
+                    Text(result.text)
+                        .font(.caption)
+                        .foregroundColor(result.isError ? .red : .green)
                 }
             }
         }
@@ -562,7 +598,44 @@ struct SettingsView: View {
     }
 
     private func redownloadDDIPressed() {
-        redownloadDDI()
+        guard !isRedownloadingDDI else { return }
+        Task {
+            await MainActor.run {
+                isRedownloadingDDI = true
+                ddiDownloadProgress = 0
+                ddiStatusMessage = "Preparing download…"
+                ddiResultMessage = nil
+            }
+            do {
+                try await redownloadDDI { progress, status in
+                    Task { @MainActor in
+                        self.ddiDownloadProgress = progress
+                        self.ddiStatusMessage = status
+                    }
+                }
+                await MainActor.run {
+                    isRedownloadingDDI = false
+                    ddiResultMessage = ("DDI files refreshed successfully.", false)
+                }
+            } catch {
+                await MainActor.run {
+                    isRedownloadingDDI = false
+                    ddiResultMessage = ("Failed to redownload DDI files: \(error.localizedDescription)", true)
+                }
+            }
+        }
+        scheduleDDIStatusDismiss()
+    }
+    
+    private func scheduleDDIStatusDismiss() {
+        Task {
+            try? await Task.sleep(nanoseconds: 4_000_000_000)
+            await MainActor.run {
+                if !isRedownloadingDDI {
+                    ddiResultMessage = nil
+                }
+            }
+        }
     }
 }
 

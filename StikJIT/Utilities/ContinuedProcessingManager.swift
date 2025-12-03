@@ -25,6 +25,10 @@ final class ContinuedProcessingManager {
     func configureIfNeeded() {
         handler.configureIfNeeded()
     }
+
+    func cancelPendingTasks() {
+        handler.cancelPendingTasks()
+    }
     
     func begin(title: String, subtitle: String) {
         handler.begin(title: title, subtitle: subtitle)
@@ -42,6 +46,7 @@ final class ContinuedProcessingManager {
 private protocol ContinuedProcessingHandling: AnyObject {
     var isSupported: Bool { get }
     func configureIfNeeded()
+    func cancelPendingTasks()
     func begin(title: String, subtitle: String)
     func updateProgress(_ fraction: Double)
     func finish(success: Bool)
@@ -50,6 +55,7 @@ private protocol ContinuedProcessingHandling: AnyObject {
 private final class NoopContinuedProcessingHandler: ContinuedProcessingHandling {
     var isSupported: Bool { false }
     func configureIfNeeded() {}
+    func cancelPendingTasks() {}
     func begin(title: String, subtitle: String) {}
     func updateProgress(_ fraction: Double) {}
     func finish(success: Bool) {}
@@ -95,6 +101,8 @@ private final class ModernContinuedProcessingHandler: ContinuedProcessingHandlin
             }
         }
         guard reserved else { return }
+        // Clear any stale request that might block new submissions.
+        scheduler.cancel(taskRequestWithIdentifier: taskIdentifier)
         let request = BGContinuedProcessingTaskRequest(identifier: taskIdentifier,
                                                        title: title,
                                                        subtitle: subtitle)
@@ -110,6 +118,18 @@ private final class ModernContinuedProcessingHandler: ContinuedProcessingHandlin
         }
     }
     
+    func cancelPendingTasks() {
+        queue.async { [weak self] in
+            guard let self else { return }
+            if let task = activeTask {
+                task.setTaskCompleted(success: false)
+                activeTask = nil
+            }
+            pendingMetadata = nil
+            scheduler.cancel(taskRequestWithIdentifier: taskIdentifier)
+        }
+    }
+
     func updateProgress(_ fraction: Double) {
         queue.async { [weak self] in
             guard let task = self?.activeTask else { return }

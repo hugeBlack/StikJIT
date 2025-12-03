@@ -91,6 +91,32 @@ struct HomeView: View {
         !ddiMounted &&
         !heartbeatOK
     }
+    private var sanitizedUsername: String {
+        let trimmed = username.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "there" : trimmed
+    }
+    private var greetingTitle: String {
+        "\(timeOfDayGreeting), \(sanitizedUsername)!"
+    }
+    private var greetingSubtitle: String {
+        if canConnectByApp {
+            return "You're all set. Connect whenever you're ready."
+        } else if !pairingFileExists {
+            return "Import your pairing file to start debugging."
+        } else if !ddiMounted {
+            return "Mount the DDI to finish preparing your device."
+        }
+        return "Complete the steps below to get ready."
+    }
+    private var timeOfDayGreeting: String {
+        let hour = Calendar.current.component(.hour, from: Date())
+        switch hour {
+        case 5..<12: return "Good morning"
+        case 12..<17: return "Good afternoon"
+        case 17..<22: return "Good evening"
+        default: return "Hello"
+        }
+    }
     private var shouldPromptForWiFi: Bool {
         pairingFileLikelyInvalid && !wifiConnected && isCellularActive
     }
@@ -105,6 +131,7 @@ struct HomeView: View {
                 
                 ScrollView {
                     VStack(spacing: 20) {
+                        welcomeCard
                         setupCard
                         connectCard
                        // if pairingFileExists {
@@ -352,6 +379,20 @@ struct HomeView: View {
     
     // MARK: - Styled Sections
     
+    private var welcomeCard: some View {
+        homeCard {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(greetingTitle)
+                    .font(.system(.title2, design: .rounded).weight(.semibold))
+                    .foregroundStyle(.primary)
+                Text(greetingSubtitle)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
     private var setupCard: some View {
         homeCard {
             VStack(alignment: .leading, spacing: 16) {

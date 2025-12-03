@@ -150,10 +150,12 @@ struct ProfileView: View {
     }
     
     
+    @AppStorage("customAccentColor") private var customAccentColorHex: String = ""
     @AppStorage("appTheme") private var appThemeRaw: String = AppTheme.system.rawValue
     @Environment(\.themeExpansionManager) private var themeExpansion
     private var backgroundStyle: BackgroundStyle { themeExpansion?.backgroundStyle(for: appThemeRaw) ?? AppTheme.system.backgroundStyle }
     private var preferredScheme: ColorScheme? { themeExpansion?.preferredColorScheme(for: appThemeRaw) }
+    private var accentColor: Color { themeExpansion?.resolvedAccentColor(from: customAccentColorHex) ?? .blue }
     
     var body: some View {
         NavigationStack {
@@ -290,13 +292,13 @@ struct ProfileView: View {
                                     .foregroundColor(.secondary)
                                     .textSelection(.enabled)
                                     Spacer()
-                                    HStack(spacing: 12) {
-                                        Button { saveProfile(profile: entry) } label: { Image(systemName: "square.and.arrow.down") }
-                                        Button(role: .destructive) {
-                                            removeTargetName = entry.appName
-                                            removeTargetUUID = entry.uuid
-                                            confirmRemove = true
-                                        } label: { Image(systemName: "trash") }
+                                    HStack(spacing: 10) {
+                                        profileActionButton(icon: "square.and.arrow.down", color: accentColor) {
+                                            saveProfile(profile: entry)
+                                        }
+                                        profileActionButton(icon: "trash", color: .refreshRed) {
+                                            removeProfilePrompt(entry: entry)
+                                        }
                                     }
                                 }
                                 .padding(.vertical, 4)
@@ -329,6 +331,31 @@ struct ProfileView: View {
         )
         .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
         .shadow(color: .black.opacity(0.15), radius: 12, x: 0, y: 4)
+    }
+    
+    private func profileActionButton(icon: String, color: Color, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.system(size: 13, weight: .bold))
+            .foregroundStyle(color.contrastText())
+            .padding(.vertical, 8)
+            .padding(.horizontal, 12)
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(color.opacity(0.9))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .stroke(Color.white.opacity(0.2), lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+    }
+    
+    private func removeProfilePrompt(entry: Profile) {
+        removeTargetName = entry.appName
+        removeTargetUUID = entry.uuid
+        confirmRemove = true
     }
     
     func loadProfiles() async {
