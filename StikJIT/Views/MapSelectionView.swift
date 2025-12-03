@@ -1,12 +1,13 @@
 //
 //  MapSelectionView.swift
-//  StikDebug
+//  StikJIT
 //
-//  Created by Stephen on 8/3/25.
+//  Created by Stephen on 11/3/25.
 //
 
 import SwiftUI
 import MapKit
+import UIKit
 
 struct MapSelectionView: UIViewRepresentable {
     @Binding var coordinate: CLLocationCoordinate2D?
@@ -63,14 +64,29 @@ struct MapSelectionView: UIViewRepresentable {
     }
 }
 
-struct LocationSimulatorView: View {
+struct LocationSimulationView: View {
+    @Environment(\.themeExpansionManager) private var themeExpansion
     @State private var coordinate: CLLocationCoordinate2D?
-    @State private var status = ""
-    @State private var showKeepOpenError = false
+    @State private var statusMessage: String = ""
+    @State private var statusIsError = false
+    @State private var showKeepOpenAlert = false
     @State private var searchQuery = ""
-    @State private var searchResults: [MKMapItem] = []
+    @State private var searchResults: [SearchResult] = []
+    @State private var backgroundTaskID: UIBackgroundTaskIdentifier = .invalid
+    @State private var resendTimer: Timer?
+    @AppStorage("appTheme") private var appThemeRaw: String = AppTheme.system.rawValue
 
-    let deviceIp: String
+    private var backgroundStyle: BackgroundStyle {
+        themeExpansion?.backgroundStyle(for: appThemeRaw) ?? AppTheme.system.backgroundStyle
+    }
+    
+    private var isAppStoreBuild: Bool {
+        #if APPSTORE
+        return true
+        #else
+        return false
+        #endif
+    }
 
     private var pairingFilePath: String {
         FileManager.default
@@ -79,118 +95,162 @@ struct LocationSimulatorView: View {
             .path
     }
 
+    private var pairingExists: Bool {
+        FileManager.default.fileExists(atPath: pairingFilePath)
+    }
+
+    private var deviceIP: String {
+        UserDefaults.standard.string(forKey: "TunnelDeviceIP") ?? "10.7.0.2"
+    }
+
     var body: some View {
-        VStack(spacing: 16) {
-            VStack{
-                Text("")
-                HStack() {
-                    Text("")
-                    Text("")
-                    Text("Location Simulator")
-                        .font(.largeTitle.bold())
-                        .padding(.top)
-                    Spacer()
+        NavigationStack {
+            ZStack {
+                ThemedBackground(style: backgroundStyle)
+                    .ignoresSafeArea()
+
+                ScrollView {
+                    VStack(spacing: 20) {
+                        searchCard
+                        mapCard
+                        actionsCard
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 24)
+                }
+
+                if showKeepOpenAlert {
+                    CustomErrorView(
+                        title: "Keep StikDebug Open",
+                        message: "Location simulation stops if the app is backgrounded. Keep StikDebug in the foreground while testing.",
+                        onDismiss: { showKeepOpenAlert = false },
+                        primaryButtonText: "OK",
+                        showSecondaryButton: false,
+                        messageType: .info
+                    )
+                    .transition(.opacity.combined(with: .scale))
+                    .zIndex(1)
                 }
             }
-            HStack {
-                Image(systemName: "magnifyingglass")
-                    .foregroundColor(.secondary)
-                TextField("Search for a place", text: $searchQuery, onCommit: performSearch)
-                    .font(.body)
-                    .autocapitalization(.none)
-                    .disableAutocorrection(true)
+            .navigationTitle("Location Simulator")
+            .onDisappear {
+                stopResendLoop()
+                endBackgroundTask()
             }
-            .padding(12)
-            .background(Color(UIColor.secondarySystemBackground))
-            .cornerRadius(12)
-            .shadow(color: .black.opacity(0.05), radius: 2, x: 0, y: 1)
-            .padding(.horizontal)
+        }
+    }
 
-            if !searchResults.isEmpty {
-                ScrollView {
-                    VStack(spacing: 0) {
-                        ForEach(searchResults, id: \.self) { item in
-                            Button(action: { select(item: item) }) {
-                                HStack {
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text(item.name ?? "Unknown")
-                                            .font(.body)
-                                        Text(item.placemark.title ?? "")
-                                            .font(.caption)
-                                            .foregroundColor(.secondary)
-                                    }
-                                    Spacer()
-                                }
-                                .padding(.vertical, 8)
-                                .padding(.horizontal)
+    private var searchCard: some View {
+        MaterialCard {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Pick a Location")
+                    .font(.headline)
+                    .foregroundColor(.primary)
+                searchField
+                if !searchResults.isEmpty {
+                    Divider()
+                    ForEach(searchResults) { result in
+                        Button(action: { select(result: result) }) {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(result.name)
+                                    .font(.subheadline.weight(.semibold))
+                                Text(result.subtitle)
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
                             }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.vertical, 6)
+                        }
+                        .buttonStyle(.plain)
+                        if result.id != searchResults.last?.id {
                             Divider()
                         }
                     }
-                    .background(RoundedRectangle(cornerRadius: 12)
-                                    .fill(Color(UIColor.systemBackground)))
-                    .shadow(color: .black.opacity(0.05), radius: 2, x: 0, y: 1)
-                    .padding(.horizontal)
                 }
-                .frame(maxHeight: 200)
+                if !pairingExists && !isAppStoreBuild {
+                    Label("Import a pairing file first.", systemImage: "exclamationmark.triangle")
+                        .font(.caption)
+                        .foregroundColor(.orange)
+                }
+                if isAppStoreBuild {
+                    Label("Location simulation is unavailable in App Store builds.", systemImage: "nosign")
+                        .font(.caption)
+                        .foregroundColor(.orange)
+                }
             }
+        }
+    }
 
-            MapSelectionView(coordinate: $coordinate)
-                .frame(height: 360)
-                .cornerRadius(12)
-                .shadow(color: .black.opacity(0.1), radius: 4, x: 0, y: 2)
-                .padding(.horizontal)
+    private var searchField: some View {
+        HStack {
+            Image(systemName: "magnifyingglass")
+                .foregroundColor(.secondary)
+            TextField("Search for a place", text: $searchQuery, onCommit: performSearch)
+                .textInputAutocapitalization(.never)
+                .disableAutocorrection(true)
+        }
+        .padding(12)
+        .background(Color(UIColor.secondarySystemBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
 
-            if let coord = coordinate {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Selected Coordinates")
-                        .font(.headline)
+    private var mapCard: some View {
+        MaterialCard {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Map")
+                    .font(.headline)
+                    .foregroundColor(.primary)
+                MapSelectionView(coordinate: $coordinate)
+                    .frame(height: 320)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .stroke(Color.white.opacity(0.12), lineWidth: 1)
+                    )
+                if let coord = coordinate {
                     Text(String(format: "%.6f, %.6f", coord.latitude, coord.longitude))
-                        .font(.subheadline)
+                        .font(.footnote)
+                        .foregroundColor(.secondary)
+                } else {
+                    Text("Long-press on the map or search above to drop a pin.")
+                        .font(.footnote)
                         .foregroundColor(.secondary)
                 }
-                .padding()
-                .frame(maxWidth: .infinity)
-                .background(RoundedRectangle(cornerRadius: 12)
-                                .fill(Color(UIColor.secondarySystemBackground)))
-                .shadow(color: .black.opacity(0.05), radius: 2, x: 0, y: 1)
-                .padding(.horizontal)
-            } else {
-                Text("Long-press on the map or search above to pick a location.")
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-                    .padding(.horizontal)
             }
-
-            HStack(spacing: 12) {
-                Button(action: simulate) {
-                    Label("Simulate", systemImage: "location.fill")
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(coordinate == nil)
-
-                Button(action: clear) {
-                    Label("Clear", systemImage: "xmark.circle.fill")
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.bordered)
-                .disabled(coordinate == nil)
-            }
-            .padding(.horizontal)
-
-            if !status.isEmpty {
-                Text(status)
-                    .font(.callout)
-                    .foregroundColor(status.contains("failed") ? .red : .green)
-                    .padding(.horizontal)
-                    .transition(.opacity)
-            }
-
-            Spacer()
         }
-        .padding(.bottom)
-        .overlay(overlayErrorView)
+    }
+
+    private var actionsCard: some View {
+        MaterialCard {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Actions")
+                    .font(.headline)
+                    .foregroundColor(.primary)
+                HStack(spacing: 12) {
+                    Button(action: simulate) {
+                        Label("Simulate", systemImage: "location.fill")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(isAppStoreBuild || coordinate == nil || !pairingExists)
+
+                    Button(action: clear) {
+                        Label("Clear", systemImage: "xmark.circle")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(isAppStoreBuild || !pairingExists)
+                }
+                if !statusMessage.isEmpty {
+                    Text(statusMessage)
+                        .font(.subheadline)
+                        .foregroundColor(statusIsError ? .red : .green)
+                }
+                Text("Device IP: \(deviceIP)")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+        }
     }
 
     private func performSearch() {
@@ -198,52 +258,86 @@ struct LocationSimulatorView: View {
         let request = MKLocalSearch.Request()
         request.naturalLanguageQuery = searchQuery
         MKLocalSearch(request: request).start { response, _ in
-            searchResults = response?.mapItems ?? []
+            let items = response?.mapItems ?? []
+            searchResults = items.map { item in
+                SearchResult(
+                    name: item.name ?? "Unknown",
+                    subtitle: item.placemark.title ?? "",
+                    item: item
+                )
+            }
         }
     }
 
-    private func select(item: MKMapItem) {
-        coordinate = item.placemark.coordinate
-        status = ""
+    private func select(result: SearchResult) {
+        coordinate = result.item.placemark.coordinate
+        statusMessage = ""
         searchResults = []
-        searchQuery = item.name ?? ""
+        searchQuery = result.name
     }
 
     private func simulate() {
+        guard pairingExists else {
+            statusMessage = "Pairing file missing."
+            statusIsError = true
+            return
+        }
         guard let coord = coordinate else { return }
-        let code = simulate_location(
-            deviceIp,
-            coord.latitude,
-            coord.longitude,
-            pairingFilePath
-        )
+        let code = simulate_location(deviceIP, coord.latitude, coord.longitude, pairingFilePath)
         if code == 0 {
-            status = "Simulation running…"
-            showKeepOpenError = true
+            statusMessage = "Simulation running…"
+            statusIsError = false
+            showKeepOpenAlert = true
+            beginBackgroundTask()
+            startResendLoop()
         } else {
-            status = "Simulation failed (code \(code))."
+            statusMessage = "Simulation failed (code \(code))."
+            statusIsError = true
+            stopResendLoop()
+            endBackgroundTask()
         }
     }
 
     private func clear() {
+        guard pairingExists else { return }
         let code = clear_simulated_location()
-        status = code == 0 ? "Cleared simulation." : "Clear failed (code \(code))."
-        showKeepOpenError = false
+        statusMessage = code == 0 ? "Cleared simulation." : "Clear failed (code \(code))."
+        statusIsError = code != 0
+        showKeepOpenAlert = false
+        stopResendLoop()
+        endBackgroundTask()
     }
-
-    @ViewBuilder
-    private var overlayErrorView: some View {
-        if showKeepOpenError {
-            CustomErrorView(
-                title: "Keep App Open",
-                message: "Your simulation will stop if the app goes to the background. Please keep the app open to continue.",
-                onDismiss: { showKeepOpenError = false },
-                primaryButtonText: "OK",
-                showSecondaryButton: false,
-                messageType: .info
-            )
-            .transition(.opacity.combined(with: .scale))
-            .zIndex(1)
+    
+    private func beginBackgroundTask() {
+        guard backgroundTaskID == .invalid else { return }
+        backgroundTaskID = UIApplication.shared.beginBackgroundTask(withName: "LocationSimulation") {
+            endBackgroundTask()
         }
     }
+
+    private func endBackgroundTask() {
+        guard backgroundTaskID != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(backgroundTaskID)
+        backgroundTaskID = .invalid
+    }
+
+    private func startResendLoop() {
+        resendTimer?.invalidate()
+        resendTimer = Timer.scheduledTimer(withTimeInterval: 4, repeats: true) { _ in
+            guard pairingExists, let coord = coordinate else { return }
+            _ = simulate_location(deviceIP, coord.latitude, coord.longitude, pairingFilePath)
+        }
+    }
+
+    private func stopResendLoop() {
+        resendTimer?.invalidate()
+        resendTimer = nil
+    }
+}
+
+private struct SearchResult: Identifiable {
+    let id = UUID()
+    let name: String
+    let subtitle: String
+    let item: MKMapItem
 }

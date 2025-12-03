@@ -7,10 +7,25 @@
 
 import SwiftUI
 
+private struct TabDescriptor: Identifiable {
+    let id: String
+    let title: String
+    let systemImage: String
+    let builder: () -> AnyView
+}
+
+extension Notification.Name {
+    static let switchToTab = Notification.Name("MainTabSwitchNotification")
+}
+
 struct MainTabView: View {
     @AppStorage("customAccentColor") private var customAccentColorHex: String = ""
     @AppStorage("appTheme") private var appThemeRaw: String = AppTheme.system.rawValue
-    @State private var selection: Int = 0
+    @AppStorage(TabConfiguration.storageKey) private var enabledTabIdentifiers: String = TabConfiguration.defaultRawValue
+    @AppStorage("primaryTabSelection") private var selection: String = TabConfiguration.defaultIDs.first ?? "home"
+    @State private var switchObserver: Any?
+    @State private var detachedTab: TabDescriptor?
+    @State private var didSetInitialHome = false
 
     // Update checking
     @State private var showForceUpdate: Bool = false
@@ -27,9 +42,48 @@ struct MainTabView: View {
     }
 
     private var isAppStoreBuild: Bool {
-        themeExpansion?.isAppStoreBuild ?? true
+        #if APPSTORE
+        return true
+        #else
+        return false
+        #endif
     }
 
+    private let configurableTabs: [TabDescriptor] = [
+        TabDescriptor(id: "home", title: "Home", systemImage: "house") { AnyView(HomeView()) },
+        TabDescriptor(id: "console", title: "Console", systemImage: "terminal") { AnyView(ConsoleLogsView()) },
+        TabDescriptor(id: "scripts", title: "Scripts", systemImage: "scroll") { AnyView(ScriptListView()) },
+        TabDescriptor(id: "profiles", title: "Profiles", systemImage: "magazine.fill") { AnyView(ProfileView()) },
+        TabDescriptor(id: "processes", title: "Processes", systemImage: "rectangle.stack.person.crop") { AnyView(ProcessInspectorView()) },
+        TabDescriptor(id: "deviceinfo", title: "Device Info", systemImage: "iphone.and.arrow.forward") { AnyView(DeviceInfoView()) },
+        TabDescriptor(id: "location", title: "Location", systemImage: "location") { AnyView(LocationSimulationView()) }
+    ]
+    
+    private var availableTabs: [TabDescriptor] {
+        configurableTabs.filter { descriptor in
+            descriptor.id != "location" || !isAppStoreBuild
+        }
+    }
+    
+    private let settingsTab = TabDescriptor(id: "settings", title: "Settings", systemImage: "gearshape.fill") {
+        AnyView(SettingsView())
+    }
+    
+    private var selectedTabDescriptors: [TabDescriptor] {
+        let ids = TabConfiguration.sanitize(raw: enabledTabIdentifiers)
+        return ids.compactMap { id in
+            availableTabs.first(where: { $0.id == id })
+        }
+    }
+    
+    private func ensureSelectionIsValid() {
+        let ids = selectedTabDescriptors.map { $0.id }
+        if ids.contains(selection) || selection == settingsTab.id {
+            return
+        }
+        selection = ids.first ?? settingsTab.id
+    }
+    
     var body: some View {
         ZStack {
             // Allow global themed background to show
@@ -37,31 +91,60 @@ struct MainTabView: View {
             
             // Main tabs
             TabView(selection: $selection) {
-                HomeView()
-                    .tabItem { Label("Home", systemImage: "house") }
-                    .tag(0)
-
-                ConsoleLogsView()
-                    .tabItem { Label("Console", systemImage: "terminal") }
-                    .tag(1)
-
-                ScriptListView()
-                    .tabItem { Label("Scripts", systemImage: "scroll") }
-                    .tag(2)
+                ForEach(selectedTabDescriptors) { descriptor in
+                    descriptor.builder()
+                        .tabItem { Label(descriptor.title, systemImage: descriptor.systemImage) }
+                        .tag(descriptor.id)
+                }
                 
-                ProfileView()
-                    .tabItem { Label("Profiles", systemImage: "magazine.fill") }
-                    .tag(3)
-
-                SettingsView()
-                    .tabItem { Label("Settings", systemImage: "gearshape.fill") }
-                    .tag(4)
+                settingsTab.builder()
+                    .tabItem { Label(settingsTab.title, systemImage: settingsTab.systemImage) }
+                    .tag(settingsTab.id)
             }
             .id((themeExpansion?.hasThemeExpansion == true) ? customAccentColorHex : "default-accent")
             .tint(accentColor)
             .preferredColorScheme(preferredScheme)
             .onAppear {
+                enabledTabIdentifiers = TabConfiguration.serialize(TabConfiguration.sanitize(raw: enabledTabIdentifiers))
+                ensureSelectionIsValid()
+                if !didSetInitialHome {
+                    if selectedTabDescriptors.contains(where: { $0.id == "home" }) {
+                        selection = "home"
+                    } else if let descriptor = availableTabs.first(where: { $0.id == "home" }) {
+                        detachedTab = descriptor
+                    }
+                    didSetInitialHome = true
+                }
                 checkForUpdate()
+                switchObserver = NotificationCenter.default.addObserver(forName: .switchToTab, object: nil, queue: .main) { note in
+                    guard let id = note.object as? String else { return }
+                    if selectedTabDescriptors.contains(where: { $0.id == id }) {
+                        selection = id
+                    } else if let descriptor = availableTabs.first(where: { $0.id == id }) {
+                        detachedTab = descriptor
+                    }
+                }
+            }
+            .onDisappear {
+                if let observer = switchObserver {
+                    NotificationCenter.default.removeObserver(observer)
+                    switchObserver = nil
+                }
+            }
+            .onChange(of: enabledTabIdentifiers) { _ in
+                ensureSelectionIsValid()
+            }
+            .sheet(item: $detachedTab) { descriptor in
+                NavigationStack {
+                    descriptor.builder()
+                        .toolbar {
+                            ToolbarItem(placement: .cancellationAction) {
+                                Button("Close") {
+                                    detachedTab = nil
+                                }
+                            }
+                        }
+                }
             }
 
             if showForceUpdate {

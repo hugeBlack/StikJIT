@@ -32,4 +32,6 @@ typedef void (^SyslogErrorHandler)(NSError *error);
 - (NSArray<NSData*>*)fetchAllProfiles:(NSError **)error;
 - (BOOL)removeProfileWithUUID:(NSString*)uuid error:(NSError **)error;
 - (BOOL)addProfile:(NSData*)profile error:(NSError **)error;
+- (NSArray<NSDictionary*>*)fetchProcessListWithError:(NSError**)error;
+- (BOOL)killProcessWithPID:(int)pid error:(NSError **)error;
 @end

@@ -18,9 +18,18 @@ struct SettingsView: View {
     @AppStorage(UserDefaults.Keys.txmOverride) private var overrideTXMDetection = false
     @AppStorage("customAccentColor") private var customAccentColorHex: String = ""
     @AppStorage("appTheme") private var appThemeRaw: String = AppTheme.system.rawValue
+    @AppStorage(TabConfiguration.storageKey) private var enabledTabIdentifiers = TabConfiguration.defaultRawValue
+    @AppStorage("primaryTabSelection") private var tabSelection = TabConfiguration.defaultIDs.first ?? "home"
     @Environment(\.themeExpansionManager) private var themeExpansion
     private var backgroundStyle: BackgroundStyle { themeExpansion?.backgroundStyle(for: appThemeRaw) ?? AppTheme.system.backgroundStyle }
     private var preferredScheme: ColorScheme? { themeExpansion?.preferredColorScheme(for: appThemeRaw) }
+    private var isAppStoreBuild: Bool {
+        #if APPSTORE
+        return true
+        #else
+        return false
+        #endif
+    }
     
     @State private var isShowingPairingFilePicker = false
     @Environment(\.colorScheme) private var colorScheme
@@ -40,6 +49,7 @@ struct SettingsView: View {
     @State private var ddiResultMessage: (text: String, isError: Bool)?
 
     @State private var showingDisplayView = false
+    @State private var tabSelectionMessage: String?
     
     private var appVersion: String {
         let marketingVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0"
@@ -57,7 +67,14 @@ struct SettingsView: View {
     private var accentColorDescription: String {
         customAccentColorHex.isEmpty ? "System Blue" : customAccentColorHex.uppercased()
     }
-    // Developer profile image URLs
+    struct TabOption: Identifiable {
+        let id: String
+        let title: String
+        let detail: String
+        let icon: String
+        let isBeta: Bool
+    }
+    
     private let developerProfiles: [String: String] = [
         "Stephen": "https://github.com/StephenDev0.png",
         "jkcoxson": "https://github.com/jkcoxson.png",
@@ -67,6 +84,21 @@ struct SettingsView: View {
         "Huge_Black": "https://github.com/HugeBlack.png",
         "Wynwxst": "https://github.com/Wynwxst.png"
     ]
+    
+    private var tabOptions: [TabOption] {
+        var options: [TabOption] = [
+            TabOption(id: "home", title: "Home", detail: "Dashboard overview", icon: "house", isBeta: false),
+            TabOption(id: "console", title: "Console", detail: "Live device logs", icon: "terminal", isBeta: false),
+            TabOption(id: "scripts", title: "Scripts", detail: "Manage automation scripts", icon: "scroll", isBeta: false),
+            TabOption(id: "profiles", title: "Profiles", detail: "Install/remove profiles", icon: "magazine.fill", isBeta: false),
+            TabOption(id: "processes", title: "Processes", detail: "Inspect running apps", icon: "rectangle.stack.person.crop", isBeta: true),
+            TabOption(id: "deviceinfo", title: "Device Info", detail: "View detailed device metadata", icon: "iphone.and.arrow.forward", isBeta: false)
+        ]
+        if !isAppStoreBuild {
+            options.append(TabOption(id: "location", title: "Location Sim", detail: "Sideload only", icon: "location", isBeta: true))
+        }
+        return options
+    }
 
     var body: some View {
         NavigationStack {
@@ -79,6 +111,7 @@ struct SettingsView: View {
                     VStack(spacing: 20) {
                         headerCard
                         appearanceCard
+                        tabCustomizationCard
                         pairingCard
                         behaviorCard
                         advancedCard
@@ -295,6 +328,56 @@ struct SettingsView: View {
         }
     }
     
+    private var tabCustomizationCard: some View {
+        let selection = selectedTabIDs
+        let pinnedOptions = selectedTabIDs.compactMap { id in
+            tabOptions.first(where: { $0.id == id })
+        }
+        let unpinnedOptions = tabOptions.filter { !selection.contains($0.id) }
+        return glassCard {
+            VStack(alignment: .leading, spacing: 16) {
+                Text("Tab Bar")
+                    .font(.headline)
+                    .foregroundColor(.primary)
+                Text("Pick up to \(TabConfiguration.maxSelectableTabs) tabs to pin. Settings is always available as the final tab.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                ForEach(pinnedOptions) { option in
+                    TabRow(option: option,
+                           isPinned: true,
+                           isFirst: pinnedOptions.first?.id == option.id,
+                           isLast: pinnedOptions.last?.id == option.id,
+                           isBeta: option.isBeta,
+                           onMove: { moveTab(option.id, offset: $0) },
+                           onToggle: { toggleTabOption(option, enable: $0) },
+                           onSelect: { if $0 { tabSelection = option.id }; switchToTab(option.id) })
+                }
+                if !unpinnedOptions.isEmpty {
+                    Divider()
+                    ForEach(unpinnedOptions) { option in
+                        TabRow(option: option,
+                               isPinned: false,
+                               isFirst: false,
+                               isLast: false,
+                               isBeta: option.isBeta,
+                               onMove: { _ in },
+                               onToggle: { toggleTabOption(option, enable: $0) },
+                               onSelect: { _ in switchToTab(option.id) })
+                    }
+                }
+                Text("\(selection.count) / \(TabConfiguration.maxSelectableTabs) slots used")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                if let message = tabSelectionMessage {
+                    Text(message)
+                        .font(.caption)
+                        .foregroundColor(.orange)
+                }
+            }
+            .padding(4)
+        }
+    }
+    
     private var pairingCard: some View {
         glassCard {
             VStack(alignment: .leading, spacing: 14) {
@@ -388,23 +471,6 @@ struct SettingsView: View {
                     .font(.headline)
                     .foregroundColor(.primary)
                 
-                NavigationLink {
-                    DeviceInfoView()
-                } label: {
-                    HStack {
-                        Image(systemName: "info.circle")
-                            .font(.system(size: 18))
-                            .foregroundColor(.primary.opacity(0.8))
-                        Text("Device Info")
-                            .foregroundColor(.primary.opacity(0.8))
-                        Spacer()
-                        Image(systemName: "chevron.right")
-                            .font(.system(size: 14))
-                            .foregroundColor(.white)
-                    }
-                    .padding(.vertical, 8)
-                }
-
                 Button(action: { openAppFolder() }) {
                     HStack {
                         Image(systemName: "folder")
@@ -539,19 +605,121 @@ struct SettingsView: View {
     
     // MARK: - Helpers (UI + logic)
     
+    private var selectedTabIDs: [String] {
+        TabConfiguration.sanitize(raw: enabledTabIdentifiers)
+    }
+    
+    private func toggleTabOption(_ option: TabOption, enable: Bool) {
+        var ids = selectedTabIDs
+        if enable {
+            guard !ids.contains(option.id) else { return }
+            guard ids.count < TabConfiguration.maxSelectableTabs else {
+                tabSelectionMessage = "You can only pin \(TabConfiguration.maxSelectableTabs) tabs besides Settings."
+                return
+            }
+            ids.append(option.id)
+        } else {
+            ids.removeAll { $0 == option.id }
+            if ids.isEmpty {
+                ids = TabConfiguration.defaultIDs
+            }
+        }
+        tabSelectionMessage = nil
+        enabledTabIdentifiers = TabConfiguration.serialize(ids)
+    }
+    
+    private func moveTab(_ id: String, offset: Int) {
+        var ids = selectedTabIDs
+        guard let currentIndex = ids.firstIndex(of: id) else { return }
+        let targetIndex = max(0, min(ids.count - 1, currentIndex + offset))
+        guard currentIndex != targetIndex else { return }
+        let element = ids.remove(at: currentIndex)
+        ids.insert(element, at: targetIndex)
+        enabledTabIdentifiers = TabConfiguration.serialize(ids)
+    }
+    
+    private func switchToTab(_ id: String) {
+        NotificationCenter.default.post(name: .switchToTab, object: id)
+    }
+
+    private struct TabRow: View {
+        let option: TabOption
+        let isPinned: Bool
+        let isFirst: Bool
+        let isLast: Bool
+        let isBeta: Bool
+        let onMove: (Int) -> Void
+        let onToggle: (Bool) -> Void
+        let onSelect: (Bool) -> Void
+
+        var body: some View {
+            HStack(spacing: 12) {
+                Button {
+                    onSelect(isPinned)
+                } label: {
+                    HStack(alignment: .center, spacing: 0) {
+                        Image(systemName: option.icon)
+                            .frame(width: 24, height: 24)
+                            .foregroundColor(.primary.opacity(0.8))
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(option.title)
+                                .font(.subheadline.weight(.semibold))
+                            Text(option.detail)
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        .padding(.leading, 8)
+                        if isBeta {
+                            Spacer(minLength: 12)
+                            Text("BETA")
+                                .font(.caption2.weight(.bold))
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 2)
+                                .foregroundColor(.orange)
+                                .background(
+                                    Capsule()
+                                        .fill(Color.orange.opacity(0.15))
+                                )
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .buttonStyle(.plain)
+
+                if isPinned {
+                    HStack(spacing: 8) {
+                        Button {
+                            onMove(-1)
+                        } label: {
+                            Image(systemName: "chevron.up")
+                        }
+                        .disabled(isFirst)
+
+                        Button {
+                            onMove(1)
+                        } label: {
+                            Image(systemName: "chevron.down")
+                        }
+                        .disabled(isLast)
+                    }
+                    .buttonStyle(.borderless)
+                }
+
+                Toggle(isOn: Binding(
+                    get: { isPinned },
+                    set: { newValue in onToggle(newValue) }
+                )) {
+                    EmptyView()
+                }
+                .labelsHidden()
+            }
+        }
+    }
+    
     private func glassCard<Content: View>(@ViewBuilder content: () -> Content) -> some View {
-        content()
-            .padding(20)
-            .background(
-                RoundedRectangle(cornerRadius: 20, style: .continuous)
-                    .fill(.ultraThinMaterial)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 20, style: .continuous)
-                            .strokeBorder(Color.white.opacity(0.15), lineWidth: 1)
-                    )
-            )
-            .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-            .shadow(color: .black.opacity(0.15), radius: 12, x: 0, y: 4)
+        MaterialCard {
+            content()
+        }
     }
         
     private func changeAppIcon(to iconName: String) {

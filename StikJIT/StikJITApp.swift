@@ -155,6 +155,7 @@ class TunnelManager: ObservableObject {
     static var shared = TunnelManager()
     
     private var vpnManager: NETunnelProviderManager?
+    private var pendingStopRequest = false
     private var tunnelDeviceIp: String {
         UserDefaults.standard.string(forKey: "TunnelDeviceIP") ?? "10.7.0.0"
     }
@@ -204,6 +205,10 @@ class TunnelManager: ObservableObject {
                         self.vpnManager = firstManager
                         self.updateTunnelStatus(from: firstManager.connection.status)
                         VPNLogger.shared.log("Using existing tunnel configuration")
+                    }
+                    if self.pendingStopRequest, let manager = self.vpnManager {
+                        VPNLogger.shared.log("Pending stop request detected during preference load")
+                        self.stopVPN(with: manager)
                     }
                 } else {
                     VPNLogger.shared.log("No existing tunnel configuration found")
@@ -326,7 +331,16 @@ class TunnelManager: ObservableObject {
     }
     
     func stopVPN() {
-        guard let manager = vpnManager else { return }
+        guard let manager = vpnManager else {
+            pendingStopRequest = true
+            loadTunnelPreferences()
+            return
+        }
+        pendingStopRequest = false
+        stopVPN(with: manager)
+    }
+    
+    private func stopVPN(with manager: NETunnelProviderManager) {
         tunnelStatus = .disconnecting
         manager.connection.stopVPNTunnel()
         VPNLogger.shared.log("Network tunnel stop initiated")
