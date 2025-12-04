@@ -222,7 +222,9 @@ struct SettingsView: View {
                         }
                         
                         RunLoop.current.add(progressTimer, forMode: .common)
-                        startHeartbeatInBackground()
+                        DispatchQueue.main.async {
+                            startHeartbeatInBackground(requireVPNConnection: false)
+                        }
                         
                     } catch {
                         print("Error copying file: \(error)")

@@ -336,20 +336,10 @@ struct ProfileView: View {
     private func profileActionButton(icon: String, color: Color, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: icon)
-                .font(.system(size: 13, weight: .bold))
-            .foregroundStyle(color.contrastText())
-            .padding(.vertical, 8)
-            .padding(.horizontal, 12)
-            .background(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(color.opacity(0.9))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .stroke(Color.white.opacity(0.2), lineWidth: 1)
-            )
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundColor(color)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.borderless)
     }
     
     private func removeProfilePrompt(entry: Profile) {

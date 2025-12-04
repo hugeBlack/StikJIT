@@ -245,7 +245,9 @@ struct HomeView: View {
                             pairingFileExists = true
                         }
                         
-                        startHeartbeatInBackground()
+                        DispatchQueue.main.async {
+                            startHeartbeatInBackground(requireVPNConnection: false)
+                        }
                         
                         let progressTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { t in
                             DispatchQueue.main.async {
@@ -1407,14 +1409,11 @@ struct HomeView: View {
         DispatchQueue.global(qos: .background).async {
             var scriptData = scriptData
             var scriptName = scriptName
-            if enableAdvancedOptions,
-               scriptData == nil,
+            if scriptData == nil,
                let bundleID,
-               let assigned = assignedScript(for: bundleID) {
-                scriptName = assigned.name
-                scriptData = assigned.data
-            } else {
-                // keep passed-in auto script if provided; otherwise nil
+               let preferred = preferredScript(for: bundleID) {
+                scriptName = preferred.name
+                scriptData = preferred.data
             }
             
             var callback: DebugAppCallback? = nil
