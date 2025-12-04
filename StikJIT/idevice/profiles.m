@@ -6,7 +6,6 @@
 //
 #include "profiles.h"
 @import Foundation;
-@import Security;
 
 NSError* makeError(int code, NSString* msg) {
     return [NSError errorWithDomain:@"profiles" code:code userInfo:@{NSLocalizedDescriptionKey: msg}];
@@ -91,87 +90,57 @@ bool addProfile(IdeviceProviderHandle* provider, NSData* profile, NSError** erro
     return true;
 }
 
-typedef CFTypeRef CMSDecoderRef;
-OSStatus CMSDecoderCreate(CMSDecoderRef * cmsDecoderOut);
-OSStatus CMSDecoderUpdateMessage(CMSDecoderRef cmsDecoder, const void * msgBytes, size_t msgBytesLen);
-OSStatus CMSDecoderFinalizeMessage(CMSDecoderRef cmsDecoder);
-OSStatus CMSDecoderCopyContent(CMSDecoderRef cmsDecoder, CFDataRef * contentOut);
-OSStatus CMSDecoderCopyAllCerts(CMSDecoderRef cmsDecoder, CFArrayRef * certsOut);
-
-
-// Helper to convert OSStatus -> NSError
-static NSError *NSErrorFromOSStatus(OSStatus status, NSString *message) {
-    if (status == errSecSuccess) return nil;
-    NSDictionary *userInfo = @{ NSLocalizedDescriptionKey: message ?: @"Security error",
-                                @"OSStatus" : @(status) };
-    return [NSError errorWithDomain:NSOSStatusErrorDomain code:status userInfo:userInfo];
-}
-
-
 @implementation CMSDecoderHelper
 
 + (NSData*)decodeCMSData:(NSData *)cmsData
 //             outCerts:(NSArray<id> * _Nullable * _Nullable)outCerts
                  error:(NSError * _Nullable * _Nullable)error
 {
-    if (!cmsData) {
-        if (error) *error = [NSError errorWithDomain:NSCocoaErrorDomain code:NSURLErrorBadURL userInfo:@{NSLocalizedDescriptionKey: @"cmsData is nil"}];
+    if (!cmsData || cmsData.length == 0) {
+        if (error) {
+            *error = [NSError errorWithDomain:NSCocoaErrorDomain
+                                         code:NSURLErrorBadURL
+                                     userInfo:@{NSLocalizedDescriptionKey: @"Invalid or empty CMS payload"}];
+        }
         return nil;
     }
 
-    CMSDecoderRef decoder = NULL;
-    OSStatus status = CMSDecoderCreate(&decoder);
-    if (status != errSecSuccess || decoder == NULL) {
-        if (error) *error = NSErrorFromOSStatus(status, @"Failed to create CMS decoder");
-        return nil;
+    NSData *xmlStart = [@"<?xml" dataUsingEncoding:NSASCIIStringEncoding];
+    NSData *plistEnd = [@"</plist>" dataUsingEncoding:NSASCIIStringEncoding];
+    NSData *binaryMagic = [@"bplist00" dataUsingEncoding:NSASCIIStringEncoding];
+
+    if (xmlStart && plistEnd) {
+        NSRange searchRange = NSMakeRange(0, cmsData.length);
+        NSRange startRange = [cmsData rangeOfData:xmlStart options:0 range:searchRange];
+        if (startRange.location != NSNotFound) {
+            NSUInteger remainingLength = cmsData.length - startRange.location;
+            NSRange endSearchRange = NSMakeRange(startRange.location, remainingLength);
+            NSRange endRange = [cmsData rangeOfData:plistEnd options:0 range:endSearchRange];
+            if (endRange.location != NSNotFound) {
+                NSUInteger plistStart = startRange.location;
+                NSUInteger plistEndIndex = NSMaxRange(endRange);
+                if (plistEndIndex > plistStart && plistEndIndex <= cmsData.length) {
+                    NSRange plistRange = NSMakeRange(plistStart, plistEndIndex - plistStart);
+                    return [cmsData subdataWithRange:plistRange];
+                }
+            }
+        }
     }
 
-    // Feed data to decoder
-    status = CMSDecoderUpdateMessage(decoder, cmsData.bytes, cmsData.length);
-    if (status != errSecSuccess) {
-        if (error) *error = NSErrorFromOSStatus(status, @"Failed to update CMS decoder with message bytes");
-        CFRelease(decoder);
-        return nil;
+    if (binaryMagic) {
+        NSRange binaryRange = [cmsData rangeOfData:binaryMagic options:0 range:NSMakeRange(0, cmsData.length)];
+        if (binaryRange.location != NSNotFound) {
+            NSRange plistRange = NSMakeRange(binaryRange.location, cmsData.length - binaryRange.location);
+            return [cmsData subdataWithRange:plistRange];
+        }
     }
 
-    // Finalize (parse) the message
-    status = CMSDecoderFinalizeMessage(decoder);
-    if (status != errSecSuccess) {
-        if (error) *error = NSErrorFromOSStatus(status, @"Failed to finalize CMS message");
-        CFRelease(decoder);
-        return nil;
+    if (error) {
+        *error = [NSError errorWithDomain:NSCocoaErrorDomain
+                                     code:NSFileReadUnknownError
+                                 userInfo:@{NSLocalizedDescriptionKey: @"Unable to extract plist from CMS payload"}];
     }
-
-    // Extract the content (the inner payload). This may be NULL if content is detached.
-    CFDataRef contentData = NULL;
-    status = CMSDecoderCopyContent(decoder, &contentData);
-    if (status != errSecSuccess && status != errSecItemNotFound) {
-        // errSecItemNotFound could mean no content (detached signature)
-        if (error) *error = NSErrorFromOSStatus(status, @"Failed to copy CMS content");
-        if (contentData) CFRelease(contentData);
-        CFRelease(decoder);
-        return nil;
-    }
-
-//    // Extract embedded certificates (if any)
-//    CFArrayRef certsArray = NULL;
-//    status = CMSDecoderCopyAllCerts(decoder, &certsArray);
-//    if (status == errSecSuccess && certsArray) {
-//        // certsArray contains SecCertificateRef items
-//        NSArray *certs = (__bridge_transfer NSArray *)certsArray;
-//        if (outCerts) *outCerts = certs;
-//    } else {
-//        // no certs or error
-//        if (status != errSecSuccess && status != errSecItemNotFound) {
-//            if (error) *error = NSErrorFromOSStatus(status, @"Failed to copy embedded certificates (if any)");
-//            CFRelease(decoder);
-//            return NO;
-//        }
-//        if (outCerts) *outCerts = @[]; // empty
-//    }
-
-    CFRelease(decoder);
-    return (__bridge NSData *)(contentData);
+    return nil;
 }
 
 @end
