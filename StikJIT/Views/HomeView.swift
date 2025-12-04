@@ -49,7 +49,6 @@ struct HomeView: View {
     @State private var pendingJITEnableConfiguration : JITEnableConfiguration? = nil
     @AppStorage("enableAdvancedOptions") private var enableAdvancedOptions = false
 
-    @AppStorage("useDefaultScript") private var useDefaultScript = false
     @State var scriptViewShow = false
     @AppStorage("DefaultScriptName") var selectedScript = "attachDetach.js"
     @State var jsModel: RunJSViewModel?
@@ -282,7 +281,7 @@ struct HomeView: View {
                 var autoScriptData: Data? = nil
                 var autoScriptName: String? = nil
                 
-                if let scriptInfo = autoScript(for: selectedBundle) {
+                if let scriptInfo = preferredScript(for: selectedBundle) {
                     autoScriptData = scriptInfo.data
                     autoScriptName = scriptInfo.name
                 }
@@ -340,7 +339,7 @@ struct HomeView: View {
                     config.scriptName = scriptName
                 }
                 if config.scriptData == nil, let bundleID = config.bundleID,
-                   let scriptInfo = autoScript(for: bundleID) {
+                   let scriptInfo = preferredScript(for: bundleID) {
                     config.scriptData = scriptInfo.data
                     config.scriptName = scriptInfo.name
                 }
@@ -946,10 +945,11 @@ struct HomeView: View {
                                 isEnabled: canConnectByApp && !isProcessing,
                                 action: {
                                     HapticFeedbackHelper.trigger()
+                                    let scriptInfo = preferredScript(for: item.bundleID)
                                     startJITInBackground(bundleID: item.bundleID,
                                                          pid: nil,
-                                                         scriptData: nil,
-                                                         scriptName: nil,
+                                                         scriptData: scriptInfo?.data,
+                                                         scriptName: scriptInfo?.name,
                                                          triggeredByURLScheme: false)
                                 }
                             )
@@ -1306,12 +1306,38 @@ struct HomeView: View {
         guard #available(iOS 26, *) else { return nil }
         let appName = (try? JITEnableContext.shared.getAppList()[bundleID]) ?? storedFavoriteName(for: bundleID)
         guard let appName,
-              let resource = autoScriptResource(for: appName),
-              let url = Bundle.main.url(forResource: resource.resource, withExtension: "js"),
-              let data = try? Data(contentsOf: url) else {
+              let resource = autoScriptResource(for: appName) else {
+            return nil
+        }
+        let scriptsDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("scripts")
+        let documentsURL = scriptsDir.appendingPathComponent(resource.fileName)
+        if let data = try? Data(contentsOf: documentsURL) {
+            return (data, resource.fileName)
+        }
+        guard let bundleURL = Bundle.main.url(forResource: resource.resource, withExtension: "js"),
+              let data = try? Data(contentsOf: bundleURL) else {
             return nil
         }
         return (data, resource.fileName)
+    }
+
+    private func assignedScript(for bundleID: String) -> (data: Data, name: String)? {
+        guard let mapping = UserDefaults.standard.dictionary(forKey: "BundleScriptMap") as? [String: String],
+              let scriptName = mapping[bundleID] else { return nil }
+        let scriptsDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("scripts")
+        let scriptURL = scriptsDir.appendingPathComponent(scriptName)
+        guard FileManager.default.fileExists(atPath: scriptURL.path),
+              let data = try? Data(contentsOf: scriptURL) else { return nil }
+        return (data, scriptName)
+    }
+
+    private func preferredScript(for bundleID: String) -> (data: Data, name: String)? {
+        if let assigned = assignedScript(for: bundleID) {
+            return assigned
+        }
+        return autoScript(for: bundleID)
     }
 
     private func storedFavoriteName(for bundleID: String) -> String? {
@@ -1346,15 +1372,15 @@ struct HomeView: View {
     private func autoScriptResource(for appName: String) -> (resource: String, fileName: String)? {
         switch appName {
         case "maciOS":
-            return ("script1", "script1.js")
+            return ("maciOS", "maciOS.js")
         case "Amethyst":
-            return ("script2", "script2.js")
+            return ("Amethyst", "Amethyst.js")
         case "Geode":
             return ("Geode", "Geode.js")
         case "MeloNX":
-            return ("melo", "melo.js")
+            return ("MeloNX", "MeloNX.js")
         case "UTM", "DolphiniOS":
-            return ("utmjit", "utmjit.js")
+            return ("UTM-Dolphin", "UTM-Dolphin.js")
         default:
             return nil
         }
@@ -1369,7 +1395,7 @@ struct HomeView: View {
             scriptViewShow = true
             DispatchQueue.global(qos: .background).async {
                 do { try jsModel?.runScript(data: script, name: name) }
-                catch { showAlert(title: "Error Occurred While Executing the Default Script.".localized, message: error.localizedDescription, showOk: true) }
+                catch { showAlert(title: "Error Occurred While Executing Script.".localized, message: error.localizedDescription, showOk: true) }
             }
         }
     }
@@ -1381,18 +1407,12 @@ struct HomeView: View {
         DispatchQueue.global(qos: .background).async {
             var scriptData = scriptData
             var scriptName = scriptName
-            if enableAdvancedOptions && scriptData == nil {
-                if scriptName == nil, let bundleID, let mapping = UserDefaults.standard.dictionary(forKey: "BundleScriptMap") as? [String: String] {
-                    scriptName = mapping[bundleID]
-                }
-                if useDefaultScript && scriptName == nil { scriptName = selectedScript }
-                if scriptData == nil, let scriptName {
-                    let url = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-                        .appendingPathComponent("scripts").appendingPathComponent(scriptName)
-                    if FileManager.default.fileExists(atPath: url.path) {
-                        do { scriptData = try Data(contentsOf: url) } catch { print("script load error: \(error)") }
-                    }
-                }
+            if enableAdvancedOptions,
+               scriptData == nil,
+               let bundleID,
+               let assigned = assignedScript(for: bundleID) {
+                scriptName = assigned.name
+                scriptData = assigned.data
             } else {
                 // keep passed-in auto script if provided; otherwise nil
             }

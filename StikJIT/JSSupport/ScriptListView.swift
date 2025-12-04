@@ -26,11 +26,6 @@ struct ScriptListView: View {
 
     @State private var showDeleteConfirmation = false
     @State private var pendingDelete: URL? = nil
-    @State private var scriptToRun: URL? = nil
-    @State private var showRunConfiguration = false
-    @State private var runConfiguration = ScriptRunConfiguration()
-    @State private var runnerModel: RunJSViewModel?
-    @State private var showRunnerLogs = false
 
     var onSelectScript: ((URL?) -> Void)? = nil
 
@@ -141,42 +136,6 @@ struct ScriptListView: View {
                 case .failure(let error): presentError(title: "Import Failed", message: error.localizedDescription)
                 }
             }
-            .sheet(isPresented: $showRunConfiguration) {
-                if let scriptToRun {
-                    RunScriptConfigurationView(
-                        scriptName: scriptToRun.lastPathComponent,
-                        configuration: $runConfiguration,
-                        onCancel: { showRunConfiguration = false },
-                        onRun: {
-                            let configuration = runConfiguration
-                            showRunConfiguration = false
-                            startRunningScript(scriptToRun, configuration: configuration)
-                        }
-                    )
-                }
-            }
-            .sheet(isPresented: $showRunnerLogs, onDismiss: { runnerModel = nil }) {
-                NavigationView {
-                    if let runnerModel {
-                        RunJSView(model: runnerModel)
-                            .toolbar {
-                                ToolbarItem(placement: .topBarTrailing) {
-                                    Button("Done") { showRunnerLogs = false }
-                                }
-                            }
-                            .navigationTitle(runnerModel.scriptName)
-                            .navigationBarTitleDisplayMode(.inline)
-                    } else {
-                        Text("No script output available.")
-                            .navigationTitle("Scripts")
-                            .toolbar {
-                                ToolbarItem(placement: .topBarTrailing) {
-                                    Button("Done") { showRunnerLogs = false }
-                                }
-                            }
-                    }
-                }
-            }
         }
         .preferredColorScheme(preferredScheme)
     }
@@ -251,16 +210,6 @@ struct ScriptListView: View {
             if showDefaultStar, isDefault {
                 Image(systemName: "star.fill")
                     .foregroundColor(.yellow)
-            }
-
-            if !isPickerMode {
-                Button {
-                    prepareToRun(script)
-                } label: {
-                    Image(systemName: "play.circle.fill")
-                        .foregroundColor(.green)
-                }
-                .buttonStyle(.borderless)
             }
 
             if showDelete {
@@ -368,15 +317,30 @@ struct ScriptListView: View {
 
     private func ensureDefaultScripts(in directory: URL) throws {
         let fm = FileManager.default
-        if let bundleURL = Bundle.main.url(forResource: "attachDetach", withExtension: "js") {
-            let dest = directory.appendingPathComponent("attachDetach.js")
-            if !fm.fileExists(atPath: dest.path) {
-                try fm.copyItem(at: bundleURL, to: dest)
+        let bundledScripts: [(resource: String, filename: String)] = [
+            ("attachDetach", "attachDetach.js"),
+            ("maciOS", "maciOS.js"),
+            ("Amethyst", "Amethyst.js"),
+            ("Geode", "Geode.js"),
+            ("MeloNX", "MeloNX.js"),
+            ("UTM-Dolphin", "UTM-Dolphin.js")
+        ]
+
+        for entry in bundledScripts {
+            if let bundleURL = Bundle.main.url(forResource: entry.resource, withExtension: "js") {
+                let destination = directory.appendingPathComponent(entry.filename)
+                if !fm.fileExists(atPath: destination.path) {
+                    try fm.copyItem(at: bundleURL, to: destination)
+                }
             }
         }
         let screenshotURL = directory.appendingPathComponent("screenshot-demo.js")
         if !fm.fileExists(atPath: screenshotURL.path) {
             try screenshotDemoScript.write(to: screenshotURL, atomically: true, encoding: .utf8)
+        }
+        let standaloneURL = directory.appendingPathComponent("screenshot-capture.js")
+        if !fm.fileExists(atPath: standaloneURL.path) {
+            try screenshotCaptureScript.write(to: standaloneURL, atomically: true, encoding: .utf8)
         }
     }
 
@@ -440,90 +404,6 @@ struct ScriptListView: View {
             } catch {
                 DispatchQueue.main.async {
                     self.presentError(title: "Import Failed", message: error.localizedDescription)
-                }
-            }
-        }
-    }
-
-    // MARK: - Script Execution
-
-    private func prepareToRun(_ script: URL) {
-        guard ProcessInfo.processInfo.hasTXM else {
-            presentError(title: "Scripts Not Supported",
-                         message: "This device does not have a Trusted Execution Monitor. Enable the override in Settings if you want to force script execution.")
-            return
-        }
-        scriptToRun = script
-        showRunConfiguration = true
-    }
-
-    private func startRunningScript(_ script: URL, configuration: ScriptRunConfiguration) {
-        guard ProcessInfo.processInfo.hasTXM else {
-            presentError(title: "Scripts Not Supported",
-                         message: "This device does not have a Trusted Execution Monitor.")
-            return
-        }
-        guard configuration.isValid else {
-            presentError(title: "Invalid Input", message: "Enter a bundle identifier or PID to continue.")
-            return
-        }
-        let scriptData: Data
-        do {
-            scriptData = try Data(contentsOf: script)
-        } catch {
-            presentError(title: "Failed to Read Script", message: error.localizedDescription)
-            return
-        }
-
-        scriptToRun = nil
-        isBusy = true
-        let scriptName = script.lastPathComponent
-        let callback = makeJsCallback(scriptData: scriptData, scriptName: scriptName)
-        let logger: LogFunc = { message in
-            if let message {
-                LogManager.shared.addInfoLog(message)
-            }
-        }
-
-        DispatchQueue.global(qos: .userInitiated).async {
-            let success: Bool
-            switch configuration.mode {
-            case .bundleID:
-                let trimmed = configuration.bundleID.trimmingCharacters(in: .whitespacesAndNewlines)
-                success = JITEnableContext.shared.debugApp(withBundleID: trimmed, logger: logger, jsCallback: callback)
-            case .pid:
-                let trimmed = configuration.pid.trimmingCharacters(in: .whitespacesAndNewlines)
-                let pidValue = Int32(trimmed) ?? 0
-                success = JITEnableContext.shared.debugApp(withPID: pidValue, logger: logger, jsCallback: callback)
-            }
-            DispatchQueue.main.async {
-                self.isBusy = false
-                if success {
-                    self.presentSuccess(title: "Script Running", message: scriptName)
-                } else {
-                    self.presentError(title: "Failed to Start Script", message: "Ensure the provider is connected and try again.")
-                }
-            }
-        }
-    }
-
-    private func makeJsCallback(scriptData: Data, scriptName: String) -> DebugAppCallback {
-        return { pid, debugProxyHandle, remoteServerHandle, semaphore in
-            let model = RunJSViewModel(pid: Int(pid),
-                                       debugProxy: debugProxyHandle,
-                                       remoteServer: remoteServerHandle,
-                                       semaphore: semaphore)
-            DispatchQueue.main.async {
-                self.runnerModel = model
-                self.showRunnerLogs = true
-            }
-            DispatchQueue.global(qos: .background).async {
-                do {
-                    try model.runScript(data: scriptData, name: scriptName)
-                } catch {
-                    DispatchQueue.main.async {
-                        self.presentError(title: "Script Execution Failed", message: error.localizedDescription)
-                    }
                 }
             }
         }
@@ -594,90 +474,6 @@ private struct WideGlassyButton: View {
     }
 }
 
-private struct RunScriptConfigurationView: View {
-    let scriptName: String
-    @Binding var configuration: ScriptRunConfiguration
-    let onCancel: () -> Void
-    let onRun: () -> Void
-
-    var body: some View {
-        NavigationStack {
-            Form {
-                Section(header: Text("Script")) {
-                    Text(scriptName)
-                        .font(.body.weight(.semibold))
-                        .textSelection(.enabled)
-                    Picker("Target", selection: $configuration.mode) {
-                        ForEach(ScriptRunMode.allCases) { mode in
-                            Text(mode.label).tag(mode)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                }
-
-                Section(header: Text(configuration.mode == .bundleID ? "Bundle Identifier" : "PID")) {
-                    if configuration.mode == .bundleID {
-                        TextField("com.example.app", text: $configuration.bundleID)
-                            .textInputAutocapitalization(.none)
-                            .autocorrectionDisabled()
-                    } else {
-                        TextField("1234", text: $configuration.pid)
-                            .keyboardType(.numberPad)
-                    }
-                }
-
-                Section {
-                    Text("The app will be attached, the script will run, and then it will detach automatically.")
-                        .font(.footnote)
-                        .foregroundColor(.secondary)
-                }
-            }
-            .navigationTitle("Run Script")
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel", action: onCancel)
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Run", action: onRun)
-                        .disabled(!configuration.isValid)
-                }
-            }
-        }
-    }
-}
-
-private enum ScriptRunMode: String, CaseIterable, Identifiable {
-    case bundleID
-    case pid
-
-    var id: String { rawValue }
-
-    var label: String {
-        switch self {
-        case .bundleID: return "Bundle ID"
-        case .pid: return "PID"
-        }
-    }
-}
-
-private struct ScriptRunConfiguration {
-    var mode: ScriptRunMode = .bundleID
-    var bundleID: String = ""
-    var pid: String = ""
-
-    var isValid: Bool {
-        switch mode {
-        case .bundleID:
-            return !bundleID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        case .pid:
-            guard let value = Int(pid.trimmingCharacters(in: .whitespacesAndNewlines)), value > 0 else {
-                return false
-            }
-            return true
-        }
-    }
-}
-
 private let screenshotDemoScript = """
 // Screenshot Demo Script
 // Attaches to the target, captures a PNG screenshot, and detaches.
@@ -707,4 +503,26 @@ function takeScreenshotDemo() {
 }
 
 takeScreenshotDemo();
+"""
+
+private let screenshotCaptureScript = """
+// Screenshot Capture Script
+// Takes a screenshot without sending any debugserver commands.
+
+function captureScreenshot() {
+    log("[ScreenshotCapture] Requesting screenshot without attaching…");
+    const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const fileName = `standalone-${timestamp}.png`;
+    const savedPath = take_screenshot(fileName);
+
+    if (savedPath && savedPath.length > 0) {
+        log(`[ScreenshotCapture] Screenshot saved to ${savedPath}`);
+    } else {
+        log("[ScreenshotCapture] Device did not report a saved path.");
+    }
+
+    log("[ScreenshotCapture] Done.");
+}
+
+captureScreenshot();
 """

@@ -10,7 +10,6 @@ import UIKit
 struct SettingsView: View {
     @AppStorage("username") private var username = "User"
     @AppStorage("selectedAppIcon") private var selectedAppIcon: String = "AppIcon"
-    @AppStorage("useDefaultScript") private var useDefaultScript = false
     @AppStorage("enableAdvancedOptions") private var enableAdvancedOptions = false
     @AppStorage("enableAdvancedBetaOptions") private var enableAdvancedBetaOptions = false
     @AppStorage("enableTesting") private var enableTesting = false
@@ -426,8 +425,6 @@ struct SettingsView: View {
                     .font(.headline)
                     .foregroundColor(.primary)
 
-                Toggle("Run Default Script After Connecting", isOn: $useDefaultScript)
-                    .tint(accentColor)
                 continuedProcessingToggle
                 Toggle(isOn: $overrideTXMDetection) {
                     VStack(alignment: .leading, spacing: 2) {
@@ -443,7 +440,6 @@ struct SettingsView: View {
             }
             .onChange(of: enableAdvancedOptions) { _, newValue in
                 if !newValue {
-                    useDefaultScript = false
                     enableContinuedProcessing = false
                     enableAdvancedBetaOptions = false
                     enableTesting = false

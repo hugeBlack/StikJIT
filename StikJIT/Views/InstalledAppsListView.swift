@@ -783,6 +783,7 @@ struct AppButton: View {
     let performanceMode: Bool
 
     @State private var showScriptPicker = false
+    @State private var assignedScriptName: String?
     @StateObject private var iconLoader: IconLoader
 
     private var rowBackgroundStyle: BackgroundStyle { themeExpansion?.backgroundStyle(for: appThemeRaw) ?? AppTheme.system.backgroundStyle }
@@ -804,6 +805,7 @@ struct AppButton: View {
         self.sharedDefaults = sharedDefaults
         self.performanceMode = performanceMode
         _iconLoader = StateObject(wrappedValue: IconLoader(bundleID: bundleID))
+        _assignedScriptName = State(initialValue: AppButton.currentAssignment(for: bundleID))
     }
 
     var body: some View {
@@ -856,6 +858,13 @@ struct AppButton: View {
             if enableAdvancedOptions {
                 Button { showScriptPicker = true } label: {
                     Label("Assign Script", systemImage: "chevron.left.slash.chevron.right")
+                }
+                if assignedScriptName != nil {
+                    Button {
+                        resetScriptAssignment()
+                    } label: {
+                        Label("Reset Script", systemImage: "arrow.uturn.left")
+                    }
                 }
             }
         }
@@ -954,12 +963,24 @@ struct AppButton: View {
     private func assignScript(_ url: URL?) {
         var mapping = UserDefaults.standard.dictionary(forKey: "BundleScriptMap") as? [String: String] ?? [:]
         if let url {
-            mapping[bundleID] = url.lastPathComponent
+            let filename = url.lastPathComponent
+            mapping[bundleID] = filename
+            assignedScriptName = filename
         } else {
             mapping.removeValue(forKey: bundleID)
+            assignedScriptName = nil
         }
         UserDefaults.standard.set(mapping, forKey: "BundleScriptMap")
         Haptics.light()
+    }
+
+    private func resetScriptAssignment() {
+        assignScript(nil)
+    }
+
+    private static func currentAssignment(for bundleID: String) -> String? {
+        let mapping = UserDefaults.standard.dictionary(forKey: "BundleScriptMap") as? [String: String]
+        return mapping?[bundleID]
     }
 
     private func persistIfChanged() {
