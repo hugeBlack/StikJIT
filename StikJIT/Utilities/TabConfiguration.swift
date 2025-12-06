@@ -3,7 +3,7 @@ import Foundation
 enum TabConfiguration {
     static let storageKey = "enabledTabIdentifiers"
     static let maxSelectableTabs = 4
-    private static let baseAllowedIDs: [String] = ["home", "console", "scripts", "profiles", "processes", "deviceinfo"]
+    private static let baseAllowedIDs: [String] = ["home", "console", "scripts", "tools", "profiles", "processes", "deviceinfo"]
     static var allowedIDs: [String] {
         var ids = baseAllowedIDs
         if FeatureFlags.isLocationSpoofingEnabled {

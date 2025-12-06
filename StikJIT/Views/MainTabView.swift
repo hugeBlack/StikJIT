@@ -53,6 +53,7 @@ struct MainTabView: View {
         TabDescriptor(id: "home", title: "Home", systemImage: "house") { AnyView(HomeView()) },
         TabDescriptor(id: "console", title: "Console", systemImage: "terminal") { AnyView(ConsoleLogsView()) },
         TabDescriptor(id: "scripts", title: "Scripts", systemImage: "scroll") { AnyView(ScriptListView()) },
+        TabDescriptor(id: "tools", title: "Mini Tools", systemImage: "shippingbox.fill") { AnyView(MiniToolListView()) },
         TabDescriptor(id: "profiles", title: "Profiles", systemImage: "magazine.fill") { AnyView(ProfileView()) },
         TabDescriptor(id: "processes", title: "Processes", systemImage: "rectangle.stack.person.crop") { AnyView(ProcessInspectorView()) },
         TabDescriptor(id: "deviceinfo", title: "Device Info", systemImage: "iphone.and.arrow.forward") { AnyView(DeviceInfoView()) },
