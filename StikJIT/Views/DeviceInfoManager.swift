@@ -31,6 +31,14 @@ final class DeviceInfoManager: ObservableObject {
         busy = true
         let path = docs.appendingPathComponent("pairingFile.plist").path
         Task.detached {
+            do {
+                try JITEnableContext.shared.ensureHeartbeat()
+            } catch {
+                await MainActor.run {
+                    self.error = ("Initialization Failed", self.initErrorMessage(Int32((error as NSError).code)))
+                    self.busy = false
+                }
+            }
             let code = path.withCString { c_deviceinfo_init($0) }
             await MainActor.run {
                 if code != 0 {

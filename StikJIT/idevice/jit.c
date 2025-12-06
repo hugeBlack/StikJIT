@@ -85,7 +85,7 @@ void runDebugServerCommand(int pid,
 
 int debug_app(IdeviceProviderHandle* tcp_provider, const char *bundle_id, LogFuncC logger, DebugAppCallback callback) {
     // Initialize logger
-    idevice_init_logger(Info, Disabled, NULL);
+//    idevice_init_logger(Info, Disabled, NULL);
     IdeviceFfiError* err = 0;
     
     CoreDeviceProxyHandle *core_device = NULL;
@@ -314,7 +314,7 @@ int debug_app_pid(IdeviceProviderHandle* tcp_provider, int pid, LogFuncC logger,
 }
 
 int launch_app_via_proxy(IdeviceProviderHandle* tcp_provider, const char *bundle_id, LogFuncC logger) {
-    idevice_init_logger(Info, Disabled, NULL);
+//    idevice_init_logger(Info, Disabled, NULL);
     IdeviceFfiError* err = NULL;
 
     CoreDeviceProxyHandle *core_device = NULL;

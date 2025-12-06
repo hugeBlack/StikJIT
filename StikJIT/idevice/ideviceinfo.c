@@ -11,7 +11,6 @@
 #include "idevice.h"
 
 static struct IdeviceProviderHandle *   g_provider = NULL;
-static struct HeartbeatClientHandle *   g_hb       = NULL;
 static struct LockdowndClientHandle *   g_client   = NULL;
 static struct IdevicePairingFile *      g_sess_pf  = NULL;
 
@@ -29,7 +28,7 @@ int ideviceinfo_c_init(const char *pairing_file_path) {
 
     struct sockaddr_in sin = { .sin_family = AF_INET,
                                .sin_port   = htons(LOCKDOWN_PORT) };
-    inet_pton(AF_INET, "10.7.0.2", &sin.sin_addr);
+    inet_pton(AF_INET, "10.7.0.1", &sin.sin_addr);
 
     err = idevice_tcp_provider_new((const struct sockaddr *)&sin,
                                    pf,
@@ -39,13 +38,6 @@ int ideviceinfo_c_init(const char *pairing_file_path) {
         idevice_error_free(err);
         idevice_pairing_file_free(pf);
         return 2;
-    }
-
-    err = heartbeat_connect(g_provider, &g_hb);
-    if (!err) {
-        heartbeat_send_polo(g_hb);
-    } else {
-        idevice_error_free(err);
     }
 
     err = lockdownd_connect(g_provider, &g_client);
@@ -103,10 +95,6 @@ void ideviceinfo_c_cleanup(void) {
     if (g_sess_pf) {
         idevice_pairing_file_free(g_sess_pf);
         g_sess_pf = NULL;
-    }
-    if (g_hb) {
-        heartbeat_client_free(g_hb);
-        g_hb = NULL;
     }
     if (g_provider) {
         idevice_provider_free(g_provider);

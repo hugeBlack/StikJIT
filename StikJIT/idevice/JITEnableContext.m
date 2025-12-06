@@ -16,11 +16,12 @@
 
 #include "JITEnableContext.h"
 #import "StikDebug-Swift.h"
+#include <os/lock.h>
+#import <pthread.h>
 
 JITEnableContext* sharedJITContext = nil;
 
 @implementation JITEnableContext {
-    bool heartbeatRunning;
     IdeviceProviderHandle* provider;
     dispatch_queue_t syslogQueue;
     BOOL syslogStreaming;
@@ -28,6 +29,13 @@ JITEnableContext* sharedJITContext = nil;
     SyslogLineHandler syslogLineHandler;
     SyslogErrorHandler syslogErrorHandler;
     dispatch_queue_t processInspectorQueue;
+    
+    int heartbeatToken;
+    NSError* lastHeartbeatError;
+    os_unfair_lock heartbeatLock;
+    BOOL heartbeatRunning;
+    dispatch_semaphore_t heartbeatSemaphore;
+
 }
 
 + (instancetype)shared {
@@ -47,6 +55,13 @@ JITEnableContext* sharedJITContext = nil;
     syslogClient = NULL;
     dispatch_queue_attr_t qosAttr = dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_SERIAL, QOS_CLASS_USER_INITIATED, 0);
     processInspectorQueue = dispatch_queue_create("com.stikdebug.processInspector", qosAttr);
+    
+    heartbeatToken = 0;
+    heartbeatLock = OS_UNFAIR_LOCK_INIT;
+    heartbeatRunning = NO;
+    heartbeatSemaphore = NULL;
+    lastHeartbeatError = nil;
+
     return self;
 }
 
@@ -101,59 +116,100 @@ JITEnableContext* sharedJITContext = nil;
     return pairingFile;
 }
 
-- (void)startHeartbeatWithCompletionHandler:(HeartbeatCompletionHandler)completionHandler
-                                   logger:(LogFunc)logger
-{
-    NSError* err = nil;
-    IdevicePairingFile* pairingFile = [self getPairingFileWithError:&err];
-    if (err) {
-        // silently swallow “pairing file not found” (-17)
-        if (err.code == -17) {
+// only block until first heartbeat is completed or failed.
+- (BOOL)startHeartbeat:(NSError**)err {
+    os_unfair_lock_lock(&heartbeatLock);
+    
+    // If heartbeat is already running, wait for it to complete
+    if (heartbeatRunning) {
+        dispatch_semaphore_t waitSemaphore = heartbeatSemaphore;
+        os_unfair_lock_unlock(&heartbeatLock);
+        
+        if (waitSemaphore) {
+            NSLog(@"waiting %p", pthread_self());
+            dispatch_semaphore_wait(waitSemaphore, DISPATCH_TIME_FOREVER);
+            dispatch_semaphore_signal(waitSemaphore);
+            NSLog(@"waiting complete %p", pthread_self());
+        }
+        *err = lastHeartbeatError;
+        return *err == nil;
+    }
+    
+    // Mark heartbeat as running
+    heartbeatRunning = YES;
+    heartbeatSemaphore = dispatch_semaphore_create(0);
+    dispatch_semaphore_t completionSemaphore = heartbeatSemaphore;
+    os_unfair_lock_unlock(&heartbeatLock);
+    
+    IdevicePairingFile* pairingFile = [self getPairingFileWithError:err];
+    if (*err) {
+        os_unfair_lock_lock(&heartbeatLock);
+        heartbeatRunning = NO;
+        heartbeatSemaphore = NULL;
+        os_unfair_lock_unlock(&heartbeatLock);
+        dispatch_semaphore_signal(completionSemaphore);
+        return NO;
+    }
+
+    globalHeartbeatToken++;
+    dispatch_semaphore_t semaphore = dispatch_semaphore_create(0);
+    __block bool completionCalled = false;
+    HeartbeatCompletionHandlerC Ccompletion = ^(int result, const char *message) {
+        if(completionCalled) {
             return;
         }
-        // for all other errors, log and forward
-        if (logger) {
-            logger(err.localizedDescription);
+        if (result != 0) {
+            *err = [self errorWithStr:[NSString stringWithCString:message
+                                                         encoding:NSASCIIStringEncoding] code:result];
+            self->lastHeartbeatError = *err;
+        } else {
+            self->lastHeartbeatError = nil;
         }
-        completionHandler(err.code, err.localizedDescription);
-        return;
+        completionCalled = true;
+
+        dispatch_semaphore_signal(semaphore);
+    };
+    
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0), ^{
+        NSLog(@"Start heartbeat NOW %p", pthread_self());
+        startHeartbeat(
+            pairingFile,
+            &self->provider,
+                       globalHeartbeatToken,Ccompletion
+        );
+    });
+    // allow 2 seconds for heartbeat, otherwise we declare timeout
+    intptr_t isTimeout = dispatch_semaphore_wait(semaphore, dispatch_time(DISPATCH_TIME_NOW, (uint64_t)(5 * NSEC_PER_SEC)));
+    if(isTimeout) {
+        Ccompletion(-1, "Heartbeat failed to complete in reasonable time.");
+    } else {
+        NSLog(@"Start heartbeat success %p", pthread_self());
     }
 
-    if(heartbeatRunning) {
-        return;
-    }
-    startHeartbeat(
-        pairingFile,
-        &provider,
-        &heartbeatRunning,
-        ^(int result, const char *message) {
-            completionHandler(result,
-                              [NSString stringWithCString:message
-                                                 encoding:NSASCIIStringEncoding]);
-        },
-        [self createCLogger:logger]
-    );
+    os_unfair_lock_lock(&heartbeatLock);
+    heartbeatRunning = NO;
+    heartbeatSemaphore = NULL;
+    os_unfair_lock_unlock(&heartbeatLock);
+    dispatch_semaphore_signal(completionSemaphore);
+    
+    return *err == nil;
 }
 
-- (void)ensureHeartbeat {
-    // wait a bit until heartbeat finish. wait at most 10s
-    int deadline = 50;
-    while((!lastHeartbeatDate || [[NSDate now] timeIntervalSinceDate:lastHeartbeatDate] > 15) && deadline) {
-        --deadline;
-        usleep(200);
+- (BOOL)ensureHeartbeatWithError:(NSError**)err {
+    // if it's 15s after last heartbeat, we restart heartbeat.
+    if((!lastHeartbeatDate || [[NSDate now] timeIntervalSinceDate:lastHeartbeatDate] > 15)) {
+        return [self startHeartbeat:err];
     }
+    return YES;
 }
 
 - (BOOL)debugAppWithBundleID:(NSString*)bundleID logger:(LogFunc)logger jsCallback:(DebugAppCallback)jsCallback {
-    if (!provider) {
-        if (logger) {
-            logger(@"Provider not initialized!");
-        }
-        NSLog(@"Provider not initialized!");
+    NSError* err = nil;
+    [self ensureHeartbeatWithError:&err];
+    if(err) {
+        logger(err.localizedDescription);
         return NO;
     }
-    
-    [self ensureHeartbeat];
     
     return debug_app(provider,
                      [bundleID UTF8String],
@@ -161,15 +217,12 @@ JITEnableContext* sharedJITContext = nil;
 }
 
 - (BOOL)debugAppWithPID:(int)pid logger:(LogFunc)logger jsCallback:(DebugAppCallback)jsCallback {
-    if (!provider) {
-        if (logger) {
-            logger(@"Provider not initialized!");
-        }
-        NSLog(@"Provider not initialized!");
+    NSError* err = nil;
+    [self ensureHeartbeatWithError:&err];
+    if(err) {
+        logger(err.localizedDescription);
         return NO;
     }
-    
-    [self ensureHeartbeat];
     
     return debug_app_pid(provider,
                      pid,
@@ -177,9 +230,8 @@ JITEnableContext* sharedJITContext = nil;
 }
 
 - (NSDictionary<NSString*, NSString*>*)getAppListWithError:(NSError**)error {
-    if (!provider) {
-        NSLog(@"Provider not initialized!");
-        *error = [self errorWithStr:@"Provider not initialized!" code:-1];
+    [self ensureHeartbeatWithError:error];
+    if(*error) {
         return nil;
     }
 
@@ -193,9 +245,8 @@ JITEnableContext* sharedJITContext = nil;
 }
 
 - (NSDictionary<NSString*, NSString*>*)getAllAppsWithError:(NSError**)error {
-    if (!provider) {
-        NSLog(@"Provider not initialized!");
-        *error = [self errorWithStr:@"Provider not initialized!" code:-1];
+    [self ensureHeartbeatWithError:error];
+    if(*error) {
         return nil;
     }
 
@@ -209,9 +260,8 @@ JITEnableContext* sharedJITContext = nil;
 }
 
 - (NSDictionary<NSString*, NSString*>*)getHiddenSystemAppsWithError:(NSError**)error {
-    if (!provider) {
-        NSLog(@"Provider not initialized!");
-        *error = [self errorWithStr:@"Provider not initialized!" code:-1];
+    [self ensureHeartbeatWithError:error];
+    if(*error) {
         return nil;
     }
 
@@ -225,9 +275,8 @@ JITEnableContext* sharedJITContext = nil;
 }
 
 - (UIImage*)getAppIconWithBundleId:(NSString*)bundleId error:(NSError**)error {
-    if (!provider) {
-        NSLog(@"Provider not initialized!");
-        *error = [self errorWithStr:@"Provider not initialized!" code:-1];
+    [self ensureHeartbeatWithError:error];
+    if(*error) {
         return nil;
     }
 
@@ -241,15 +290,12 @@ JITEnableContext* sharedJITContext = nil;
 }
 
 - (BOOL)launchAppWithoutDebug:(NSString*)bundleID logger:(LogFunc)logger {
-    if (!provider) {
-        if (logger) {
-            logger(@"Provider not initialized!");
-        }
-        NSLog(@"Provider not initialized!");
+    NSError* err = nil;
+    [self ensureHeartbeatWithError:&err];
+    if(err) {
+        logger(err.localizedDescription);
         return NO;
     }
-
-    [self ensureHeartbeat];
 
     int result = launch_app_via_proxy(provider,
                                       [bundleID UTF8String],
@@ -260,10 +306,10 @@ JITEnableContext* sharedJITContext = nil;
 - (void)startSyslogRelayWithHandler:(SyslogLineHandler)lineHandler
                              onError:(SyslogErrorHandler)errorHandler
 {
-    if (!provider) {
-        if (errorHandler) {
-            errorHandler([self errorWithStr:@"Provider not initialized!" code:-1]);
-        }
+    NSError* error = nil;
+    [self ensureHeartbeatWithError:&error];
+    if(error) {
+        errorHandler(error);
         return;
     }
     if (!lineHandler || syslogStreaming) {
@@ -278,8 +324,6 @@ JITEnableContext* sharedJITContext = nil;
     dispatch_async(syslogQueue, ^{
         __strong typeof(self) strongSelf = weakSelf;
         if (!strongSelf) { return; }
-
-        [strongSelf ensureHeartbeat];
 
         SyslogRelayClientHandle *client = NULL;
         IdeviceFfiError *err = syslog_relay_connect_tcp(strongSelf->provider, &client);
@@ -370,27 +414,26 @@ JITEnableContext* sharedJITContext = nil;
 }
 
 - (NSArray<NSData*>*)fetchAllProfiles:(NSError **)error {
-    if (!provider) {
-        NSLog(@"Provider not initialized!");
-        *error = [self errorWithStr:@"Provider not initialized!" code:-1];
+    [self ensureHeartbeatWithError:error];
+    if(*error) {
         return nil;
     }
+    
     return fetchAppProfiles(provider, error);
 }
 
 - (BOOL)removeProfileWithUUID:(NSString*)uuid error:(NSError **)error {
-    if (!provider) {
-        NSLog(@"Provider not initialized!");
-        *error = [self errorWithStr:@"Provider not initialized!" code:-1];
+    [self ensureHeartbeatWithError:error];
+    if(*error) {
         return nil;
     }
+    
     return removeProfile(provider, uuid, error);
 }
 
 - (BOOL)addProfile:(NSData*)profile error:(NSError **)error {
-    if (!provider) {
-        NSLog(@"Provider not initialized!");
-        *error = [self errorWithStr:@"Provider not initialized!" code:-1];
+    [self ensureHeartbeatWithError:error];
+    if(*error) {
         return nil;
     }
     return addProfile(provider, profile, error);
@@ -404,10 +447,11 @@ JITEnableContext* sharedJITContext = nil;
 }
 
 - (NSArray<NSDictionary*>*)fetchProcessesViaAppServiceWithError:(NSError **)error {
-    NSURL *documents = [[NSFileManager defaultManager] URLsForDirectory:NSDocumentDirectory inDomains:NSUserDomainMask].firstObject;
-    NSURL *pairingURL = [documents URLByAppendingPathComponent:@"pairingFile.plist"];
-    IdevicePairingFile *pairingFile = NULL;
-    IdeviceProviderHandle *tempProvider = NULL;
+    [self ensureHeartbeatWithError:error];
+    if(*error) {
+        return nil;
+    }
+    
     IdeviceProviderHandle *providerToUse = provider;
     CoreDeviceProxyHandle *coreProxy = NULL;
     AdapterHandle *adapter = NULL;
@@ -420,38 +464,6 @@ JITEnableContext* sharedJITContext = nil;
     IdeviceFfiError *ffiError = NULL;
 
     do {
-        if (!providerToUse) {
-            ffiError = idevice_pairing_file_read(pairingURL.path.UTF8String, &pairingFile);
-            if (ffiError) {
-                if (error) {
-                    *error = [self errorWithStr:@"Unable to read pairing file" code:ffiError->code];
-                }
-                idevice_error_free(ffiError);
-                ffiError = NULL;
-                break;
-            }
-
-            struct sockaddr_in addr = {0};
-            addr.sin_family = AF_INET;
-            addr.sin_port = htons(LOCKDOWN_PORT);
-            NSString *ip = [[NSUserDefaults standardUserDefaults] stringForKey:@"TunnelDeviceIP"];
-            if (ip.length == 0) {
-                ip = @"10.7.0.2";
-            }
-            inet_pton(AF_INET, ip.UTF8String, &addr.sin_addr);
-
-            ffiError = idevice_tcp_provider_new((struct sockaddr *)&addr, pairingFile, "ProcessInspector", &tempProvider);
-            if (ffiError) {
-                if (error) {
-                    *error = [self errorWithStr:[NSString stringWithUTF8String:ffiError->message ?: "Failed to open provider"]
-                                           code:ffiError->code];
-                }
-                idevice_error_free(ffiError);
-                ffiError = NULL;
-                break;
-            }
-            providerToUse = tempProvider;
-        }
 
         ffiError = core_device_proxy_connect(providerToUse, &coreProxy);
         if (ffiError) {
@@ -563,18 +575,13 @@ JITEnableContext* sharedJITContext = nil;
     if (coreProxy) {
         core_device_proxy_free(coreProxy);
     }
-    if (tempProvider) {
-        idevice_provider_free(tempProvider);
-    }
-    if (pairingFile) {
-        idevice_pairing_file_free(pairingFile);
-    }
     return result;
 }
 
 - (NSArray<NSDictionary*>*)_fetchProcessListLocked:(NSError**)error {
-    if (provider) {
-        [self ensureHeartbeat];
+    [self ensureHeartbeatWithError:error];
+    if(*error) {
+        return nil;
     }
     return [self fetchProcessesViaAppServiceWithError:error];
 }
@@ -592,10 +599,11 @@ JITEnableContext* sharedJITContext = nil;
 }
 
 - (BOOL)killProcessWithPID:(int)pid error:(NSError **)error {
-    NSURL *documents = [[NSFileManager defaultManager] URLsForDirectory:NSDocumentDirectory inDomains:NSUserDomainMask].firstObject;
-    NSURL *pairingURL = [documents URLByAppendingPathComponent:@"pairingFile.plist"];
-    IdevicePairingFile *pairingFile = NULL;
-    IdeviceProviderHandle *tempProvider = NULL;
+    [self ensureHeartbeatWithError:error];
+    if(*error) {
+        return nil;
+    }
+    
     IdeviceProviderHandle *providerToUse = provider;
     CoreDeviceProxyHandle *coreProxy = NULL;
     AdapterHandle *adapter = NULL;
@@ -607,41 +615,6 @@ JITEnableContext* sharedJITContext = nil;
     BOOL success = NO;
 
     do {
-        if (!providerToUse) {
-            ffiError = idevice_pairing_file_read(pairingURL.path.UTF8String, &pairingFile);
-            if (ffiError) {
-                if (error) {
-                    *error = [self errorWithStr:@"Unable to read pairing file" code:ffiError->code];
-                }
-                idevice_error_free(ffiError);
-                ffiError = NULL;
-                break;
-            }
-
-            struct sockaddr_in addr = {0};
-            addr.sin_family = AF_INET;
-            addr.sin_port = htons(LOCKDOWN_PORT);
-            NSString *ip = [[NSUserDefaults standardUserDefaults] stringForKey:@"TunnelDeviceIP"];
-            if (ip.length == 0) {
-                ip = @"10.7.0.2";
-            }
-            inet_pton(AF_INET, ip.UTF8String, &addr.sin_addr);
-
-            ffiError = idevice_tcp_provider_new((struct sockaddr *)&addr, pairingFile, "ProcessInspectorKill", &tempProvider);
-            if (ffiError) {
-                if (error) {
-                    *error = [self errorWithStr:[NSString stringWithUTF8String:ffiError->message ?: "Failed to open provider"]
-                                           code:ffiError->code];
-                }
-                idevice_error_free(ffiError);
-                ffiError = NULL;
-                break;
-            }
-            providerToUse = tempProvider;
-        } else {
-            [self ensureHeartbeat];
-        }
-
         ffiError = core_device_proxy_connect(providerToUse, &coreProxy);
         if (ffiError) {
             if (error) {
@@ -742,13 +715,26 @@ JITEnableContext* sharedJITContext = nil;
     if (coreProxy) {
         core_device_proxy_free(coreProxy);
     }
-    if (tempProvider) {
-        idevice_provider_free(tempProvider);
-    }
-    if (pairingFile) {
-        idevice_pairing_file_free(pairingFile);
-    }
     return success;
+}
+
+- (NSUInteger)getMountedDeviceCount:(NSError**)error {
+    [self ensureHeartbeatWithError:error];
+    if(*error) {
+        return NO;
+    }
+    return getMountedDeviceCount(provider, error);
+}
+- (NSInteger)mountPersonalDDIWithImagePath:(NSString*)imagePath trustcachePath:(NSString*)trustcachePath manifestPath:(NSString*)manifestPath error:(NSError**)error {
+    [self ensureHeartbeatWithError:error];
+    if(*error) {
+        return 0;
+    }
+    IdevicePairingFile* pairing = [self getPairingFileWithError:error];
+    if(*error) {
+        return 0;
+    }
+    return mountPersonalDDI(provider, pairing, imagePath, trustcachePath, manifestPath, error);
 }
 
 @end

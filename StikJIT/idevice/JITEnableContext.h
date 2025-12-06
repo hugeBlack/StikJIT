@@ -8,6 +8,8 @@
 @import UIKit;
 #include "idevice.h"
 #include "jit.h"
+#include "heartbeat.h"
+#include "mount.h"
 
 typedef void (^HeartbeatCompletionHandler)(int result, NSString *message);
 typedef void (^LogFuncC)(const char* message, ...);
@@ -18,7 +20,8 @@ typedef void (^SyslogErrorHandler)(NSError *error);
 @interface JITEnableContext : NSObject
 @property (class, readonly)JITEnableContext* shared;
 - (IdevicePairingFile*)getPairingFileWithError:(NSError**)error;
-- (void)startHeartbeatWithCompletionHandler:(HeartbeatCompletionHandler)completionHandler logger:(LogFunc)logger;
+- (BOOL)ensureHeartbeatWithError:(NSError**)err;
+- (BOOL)startHeartbeat:(NSError**)err;
 - (BOOL)debugAppWithBundleID:(NSString*)bundleID logger:(LogFunc)logger jsCallback:(DebugAppCallback)jsCallback;
 - (BOOL)debugAppWithPID:(int)pid logger:(LogFunc)logger jsCallback:(DebugAppCallback)jsCallback;
 - (NSDictionary<NSString*, NSString*>*)getAppListWithError:(NSError**)error;
@@ -34,4 +37,7 @@ typedef void (^SyslogErrorHandler)(NSError *error);
 - (BOOL)addProfile:(NSData*)profile error:(NSError **)error;
 - (NSArray<NSDictionary*>*)fetchProcessListWithError:(NSError**)error;
 - (BOOL)killProcessWithPID:(int)pid error:(NSError **)error;
+
+- (NSUInteger)getMountedDeviceCount:(NSError**)error __attribute__((swift_error(zero_result)));
+- (NSInteger)mountPersonalDDIWithImagePath:(NSString*)imagePath trustcachePath:(NSString*)trustcachePath manifestPath:(NSString*)manifestPath error:(NSError**)error __attribute__((swift_error(nonzero_result)));
 @end

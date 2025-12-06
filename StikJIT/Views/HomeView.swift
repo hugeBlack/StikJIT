@@ -1229,10 +1229,14 @@ struct HomeView: View {
         }
         if pairingFileExists {
             if !ddiMounted {
-                showAlert(title: "Device Not Mounted".localized, message: "The Developer Disk Image has not been mounted yet. Check in settings for more information.".localized, showOk: true) { _ in }
-                return
+                mounting.checkforMounted()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                    showAlert(title: "Device Not Mounted".localized, message: "The Developer Disk Image has not been mounted yet. Check in settings for more information.".localized, showOk: true) { _ in }
+                    return
+                }
+            } else {
+                isShowingInstalledApps = true
             }
-            isShowingInstalledApps = true
         } else {
             isShowingPairingFilePicker = true
         }
