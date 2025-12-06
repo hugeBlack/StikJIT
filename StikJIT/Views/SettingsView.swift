@@ -90,11 +90,14 @@ struct SettingsView: View {
             TabOption(id: "console", title: "Console", detail: "Live device logs", icon: "terminal", isBeta: false),
             TabOption(id: "scripts", title: "Scripts", detail: "Manage automation scripts", icon: "scroll", isBeta: false),
             TabOption(id: "profiles", title: "Profiles", detail: "Install/remove profiles", icon: "magazine.fill", isBeta: false),
-            TabOption(id: "processes", title: "Processes", detail: "Inspect running apps", icon: "rectangle.stack.person.crop", isBeta: true),
             TabOption(id: "deviceinfo", title: "Device Info", detail: "View detailed device metadata", icon: "iphone.and.arrow.forward", isBeta: false)
         ]
-        if FeatureFlags.isLocationSpoofingEnabled && !isAppStoreBuild {
-            options.append(TabOption(id: "location", title: "Location Sim", detail: "Sideload only", icon: "location", isBeta: true))
+        if FeatureFlags.showBetaTabs {
+            options.append(TabOption(id: "processes", title: "Processes", detail: "Inspect running apps", icon: "rectangle.stack.person.crop", isBeta: true))
+            options.append(TabOption(id: "devicelibrary", title: "Devices", detail: "Manage external devices", icon: "list.bullet.rectangle", isBeta: true))
+            if FeatureFlags.isLocationSpoofingEnabled && !isAppStoreBuild {
+                options.append(TabOption(id: "location", title: "Location Sim", detail: "Sideload only", icon: "location", isBeta: true))
+            }
         }
         return options
     }
@@ -266,7 +269,7 @@ struct SettingsView: View {
                                 .stroke(Color.white.opacity(0.12), lineWidth: 1)
                         )
                 }
-                Text("StikDebug")
+                Text("StikDebug 26")
                     .font(.title2.weight(.semibold))
                     .foregroundColor(.primary)
             }
@@ -404,7 +407,6 @@ struct SettingsView: View {
                             .stroke(Color.white.opacity(0.2), lineWidth: 0.5)
                     )
                 }
-                
                 if showPairingFileMessage && !isImportingFile {
                     HStack {
                         Image(systemName: "checkmark.circle.fill").foregroundColor(.green)
@@ -571,14 +573,6 @@ struct SettingsView: View {
                     .padding(.vertical, 8)
                 }
                 
-                HStack(alignment: .center, spacing: 8) {
-                    Image(systemName: "shield.slash")
-                        .font(.system(size: 18))
-                        .foregroundColor(.primary.opacity(0.8))
-                    Text("You can turn off the VPN in the Settings app.")
-                        .foregroundColor(.secondary)
-                }
-                .padding(.top, 4)
             }
         }
     }

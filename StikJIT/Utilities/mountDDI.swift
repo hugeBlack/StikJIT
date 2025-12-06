@@ -47,8 +47,10 @@ func htons(_ value: UInt16) -> UInt16 {
 }
 
 func isMounted() -> Bool {
-    guard TunnelManager.shared.tunnelStatus == .connected else {
-        return false
+    if DeviceConnectionContext.requiresLoopbackVPN {
+        guard TunnelManager.shared.tunnelStatus == .connected else {
+            return false
+        }
     }
     
     var addr = sockaddr_in()
@@ -59,7 +61,7 @@ func isMounted() -> Bool {
     
     let pairingFilePath = URL.documentsDirectory.appendingPathComponent("pairingFile.plist").path
     
-    guard inet_pton(AF_INET, "10.7.0.1", &addr.sin_addr) == 1 else {
+    guard inet_pton(AF_INET, DeviceConnectionContext.targetIPAddress, &addr.sin_addr) == 1 else {
         print("Invalid IP address")
         return false
     }

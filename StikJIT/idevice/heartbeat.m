@@ -10,6 +10,7 @@
 #include <CoreFoundation/CoreFoundation.h>
 #include <limits.h>
 #include "heartbeat.h"
+@import Foundation;
 
 
 bool isHeartbeat = false;
@@ -25,7 +26,11 @@ void startHeartbeat(IdevicePairingFile* pairing_file, IdeviceProviderHandle** pr
     memset(&addr, 0, sizeof(addr));
     addr.sin_family = AF_INET;
     addr.sin_port = htons(LOCKDOWN_PORT);
-    inet_pton(AF_INET, "10.7.0.2", &addr.sin_addr);
+    NSString *ipOverride = [[NSUserDefaults standardUserDefaults] stringForKey:@"TunnelDeviceIP"];
+    if (ipOverride.length == 0) {
+        ipOverride = @"10.7.0.2";
+    }
+    inet_pton(AF_INET, ipOverride.UTF8String, &addr.sin_addr);
     
     IdeviceProviderHandle* newProvider = 0;
     IdeviceFfiError* err = idevice_tcp_provider_new((struct sockaddr *)&addr, pairing_file,

@@ -3,11 +3,15 @@ import Foundation
 enum TabConfiguration {
     static let storageKey = "enabledTabIdentifiers"
     static let maxSelectableTabs = 4
-    private static let baseAllowedIDs: [String] = ["home", "console", "scripts", "profiles", "processes", "deviceinfo"]
+    private static let coreIDs: [String] = ["home", "console", "scripts", "profiles", "deviceinfo"]
     static var allowedIDs: [String] {
-        var ids = baseAllowedIDs
-        if FeatureFlags.isLocationSpoofingEnabled {
-            ids.append("location")
+        var ids = coreIDs
+        if FeatureFlags.showBetaTabs {
+            ids.append("processes")
+            ids.append("devicelibrary")
+            if FeatureFlags.isLocationSpoofingEnabled {
+                ids.append("location")
+            }
         }
         return ids
     }

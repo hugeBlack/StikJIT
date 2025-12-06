@@ -10,3 +10,4 @@
 #include "idevice/ideviceinfo.h"
 #include "idevice/ls.h"
 #include "idevice/profiles.h"
+#include "idevice/something.h"

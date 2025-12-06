@@ -25,5 +25,7 @@ extension UserDefaults {
         static let txmOverride = "overrideTXMForScripts"
         /// Controls whether BGContinuedProcessingTask should be used to keep scripts alive in the background.
         static let enableContinuedProcessing = "enableContinuedProcessing"
+        /// Tracks whether an external device profile is currently active.
+        static let usingExternalDevice = "UsingExternalDevice"
     }
 }

@@ -9,9 +9,9 @@
 #define PROFILES_H
 #include "idevice.h"
 #include <Foundation/Foundation.h>
-NSArray<NSData*>* fetchAppProfiles(IdeviceProviderHandle* provider, NSError** error);
-bool removeProfile(IdeviceProviderHandle* provider, NSString* uuid, NSError** error);
-bool addProfile(IdeviceProviderHandle* provider, NSData* profile, NSError** error);
+NSArray<NSData*>* _Nullable fetchAppProfiles(IdeviceProviderHandle* _Nonnull provider, NSError* _Nullable * _Nullable error);
+bool removeProfile(IdeviceProviderHandle* _Nonnull provider, NSString* _Nonnull uuid, NSError* _Nullable * _Nullable error);
+bool addProfile(IdeviceProviderHandle* _Nonnull provider, NSData* _Nonnull profile, NSError* _Nullable * _Nullable error);
 
 @interface CMSDecoderHelper : NSObject
 // Decode CMS/PKCS7 data and return decoded payload and any embedded certs
