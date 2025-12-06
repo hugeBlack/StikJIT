@@ -126,10 +126,8 @@ JITEnableContext* sharedJITContext = nil;
         os_unfair_lock_unlock(&heartbeatLock);
         
         if (waitSemaphore) {
-            NSLog(@"waiting %p", pthread_self());
             dispatch_semaphore_wait(waitSemaphore, DISPATCH_TIME_FOREVER);
             dispatch_semaphore_signal(waitSemaphore);
-            NSLog(@"waiting complete %p", pthread_self());
         }
         *err = lastHeartbeatError;
         return *err == nil;
@@ -171,7 +169,6 @@ JITEnableContext* sharedJITContext = nil;
     };
     
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0), ^{
-        NSLog(@"Start heartbeat NOW %p", pthread_self());
         startHeartbeat(
             pairingFile,
             &self->provider,
