@@ -13,7 +13,7 @@ struct SettingsView: View {
     @AppStorage("enableAdvancedOptions") private var enableAdvancedOptions = false
     @AppStorage("enableAdvancedBetaOptions") private var enableAdvancedBetaOptions = false
     @AppStorage("enableTesting") private var enableTesting = false
-    @AppStorage(UserDefaults.Keys.enableContinuedProcessing) private var enableContinuedProcessing = false
+    @AppStorage("enablePiP") private var enablePiP = false
     @AppStorage(UserDefaults.Keys.txmOverride) private var overrideTXMDetection = false
     @AppStorage("customAccentColor") private var customAccentColorHex: String = ""
     @AppStorage("appTheme") private var appThemeRaw: String = AppTheme.system.rawValue
@@ -429,7 +429,8 @@ struct SettingsView: View {
                     .font(.headline)
                     .foregroundColor(.primary)
 
-                continuedProcessingToggle
+                Toggle("Picture in Picture", isOn: $enablePiP)
+                    .tint(accentColor)
                 Toggle(isOn: $overrideTXMDetection) {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Always Run Scripts")
@@ -444,7 +445,7 @@ struct SettingsView: View {
             }
             .onChange(of: enableAdvancedOptions) { _, newValue in
                 if !newValue {
-                    enableContinuedProcessing = false
+                    enablePiP = false
                     enableAdvancedBetaOptions = false
                     enableTesting = false
                 }
@@ -452,13 +453,6 @@ struct SettingsView: View {
             .onChange(of: enableAdvancedBetaOptions) { _, newValue in
                 if !newValue {
                     enableTesting = false
-                }
-            }
-            .onChange(of: enableContinuedProcessing) { _, newValue in
-                if newValue {
-                    ContinuedProcessingManager.shared.configureIfNeeded()
-                } else {
-                    ContinuedProcessingManager.shared.cancelPendingTasks()
                 }
             }
         }
@@ -516,24 +510,6 @@ struct SettingsView: View {
         }
     }
 
-    private var continuedProcessingToggle: some View {
-        Group {
-            if ContinuedProcessingManager.shared.isSupported {
-                Toggle("Allow Continued Processing", isOn: $enableContinuedProcessing)
-                    .tint(accentColor)
-            } else {
-                VStack(alignment: .leading, spacing: 4) {
-                    Toggle("Allow Continued Processing", isOn: .constant(false))
-                        .tint(accentColor)
-                        .disabled(true)
-                    Text("Requires iOS 26 or later.")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-            }
-        }
-    }
-    
     private var helpCard: some View {
         glassCard {
             VStack(alignment: .leading, spacing: 14) {

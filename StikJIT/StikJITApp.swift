@@ -15,17 +15,9 @@ private func registerAdvancedOptionsDefault() {
     let os = ProcessInfo.processInfo.operatingSystemVersion
     // Enable advanced options by default on iOS 19/26 and above
     let enabled = os.majorVersion >= 19
-    let defaults = UserDefaults.standard
-    defaults.register(defaults: ["enableAdvancedOptions": enabled])
-    defaults.register(defaults: [UserDefaults.Keys.txmOverride: false])
-    if defaults.object(forKey: UserDefaults.Keys.enableContinuedProcessing) == nil {
-        let legacyPiP = defaults.object(forKey: "enablePiP") as? Bool
-        if let legacyPiP {
-            defaults.set(legacyPiP, forKey: UserDefaults.Keys.enableContinuedProcessing)
-        } else {
-            defaults.register(defaults: [UserDefaults.Keys.enableContinuedProcessing: enabled])
-        }
-    }
+    UserDefaults.standard.register(defaults: ["enableAdvancedOptions": enabled])
+    UserDefaults.standard.register(defaults: ["enablePiP": enabled])
+    UserDefaults.standard.register(defaults: [UserDefaults.Keys.txmOverride: false])
 }
 
 // MARK: - Welcome Sheet
@@ -527,7 +519,6 @@ struct HeartbeatApp: App {
     
     init() {
         registerAdvancedOptionsDefault()
-        ContinuedProcessingManager.shared.configureIfNeeded()
         newVerCheck()
         let fixMethod = class_getInstanceMethod(UIDocumentPickerViewController.self, #selector(UIDocumentPickerViewController.fix_init(forOpeningContentTypes:asCopy:)))!
         let origMethod = class_getInstanceMethod(UIDocumentPickerViewController.self, #selector(UIDocumentPickerViewController.init(forOpeningContentTypes:asCopy:)))!

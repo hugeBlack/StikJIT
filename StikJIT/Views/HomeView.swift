@@ -7,6 +7,7 @@
 
 import SwiftUI
 import UniformTypeIdentifiers
+import Pipify
 import UIKit
 import WidgetKit
 import Combine
@@ -49,7 +50,9 @@ struct HomeView: View {
     @State private var pendingJITEnableConfiguration : JITEnableConfiguration? = nil
     @AppStorage("enableAdvancedOptions") private var enableAdvancedOptions = false
     
+    @AppStorage("enablePiP") private var enablePiP = true
     @State var scriptViewShow = false
+    @State private var pipRequired = false
     @AppStorage("DefaultScriptName") var selectedScript = "attachDetach.js"
     @State var jsModel: RunJSViewModel?
     
@@ -297,6 +300,12 @@ struct HomeView: View {
                                      scriptName: autoScriptName,
                                      triggeredByURLScheme: false)
             }
+        }
+        .pipify(isPresented: Binding(
+            get: { pipRequired && enablePiP },
+            set: { pipRequired = $0 }
+        )) {
+            RunJSViewPiP(model: $jsModel)
         }
         .sheet(isPresented: $scriptViewShow) {
             NavigationView {
@@ -1496,6 +1505,9 @@ struct HomeView: View {
                 if ProcessInfo.processInfo.hasTXM, let sd = scriptData {
                     callback = getJsCallback(sd, name: scriptName ?? bundleID ?? "Script")
                     if triggeredByURLScheme { usleep(500000) }
+                    pipRequired = true
+                } else {
+                    pipRequired = false
                 }
                 
                 let logger: LogFunc = { message in if let message { LogManager.shared.addInfoLog(message) } }
@@ -1518,8 +1530,9 @@ struct HomeView: View {
                     }
                 }
                 isProcessing = false
-            }
+                pipRequired = false
         }
+    }
         
         private func launchSystemApp(item: SystemPinnedItem) {
             guard !launchingSystemApps.contains(item.bundleID) else { return }
