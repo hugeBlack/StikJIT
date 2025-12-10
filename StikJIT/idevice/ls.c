@@ -38,11 +38,25 @@ int simulate_location(const char *device_ip,
 {
     idevice_init_logger(Debug, Disabled, NULL);
     IdeviceFfiError *err = NULL;
+    
+    if (g_location_sim) {
+        if ((err = location_simulation_set(g_location_sim, latitude, longitude))) {
+            idevice_error_free(err);
+            cleanup_on_error();
+        } else {
+            return IPA_OK;
+        }
+    }
 
     struct sockaddr_in addr = { .sin_family = AF_INET,
                                 .sin_port   = htons(LOCKDOWN_PORT) };
     if (inet_pton(AF_INET, device_ip, &addr.sin_addr) != 1) {
         return IPA_ERR_INVALID_IP;
+    }
+
+    if (g_pairing) {
+        idevice_pairing_file_free(g_pairing);
+        g_pairing = NULL;
     }
 
     if ((err = idevice_pairing_file_read(pairing_file, &g_pairing))) {
@@ -132,12 +146,7 @@ int clear_simulated_location(void)
     if (!g_location_sim) return IPA_ERR_LOCATION_CLEAR;
 
     err = location_simulation_clear(g_location_sim);
-    location_simulation_free(g_location_sim);
-    g_location_sim = NULL;
+    cleanup_on_error();
 
-    if (g_remote_server) { remote_server_free(g_remote_server);    g_remote_server = NULL; }
-    if (g_handshake)     { rsd_handshake_free(g_handshake);        g_handshake     = NULL; }
-    if (g_adapter)       { adapter_free(g_adapter);               g_adapter       = NULL; }
-  
     return err ? IPA_ERR_LOCATION_CLEAR : IPA_OK;
 }
