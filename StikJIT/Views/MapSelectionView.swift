@@ -8,6 +8,7 @@
 import SwiftUI
 import MapKit
 import UIKit
+import Pipify
 
 struct MapSelectionView: UIViewRepresentable {
     @Binding var coordinate: CLLocationCoordinate2D?
@@ -64,6 +65,12 @@ struct MapSelectionView: UIViewRepresentable {
     }
 }
 
+final class LocationSpoofingPiPState: ObservableObject {
+    @Published var status: String = "Idle"
+    @Published var coordinate: CLLocationCoordinate2D?
+    @Published var lastUpdated: Date?
+}
+
 struct LocationSimulationView: View {
     @Environment(\.themeExpansionManager) private var themeExpansion
     @State private var coordinate: CLLocationCoordinate2D?
@@ -75,6 +82,9 @@ struct LocationSimulationView: View {
     @State private var backgroundTaskID: UIBackgroundTaskIdentifier = .invalid
     @State private var resendTimer: Timer?
     @AppStorage("appTheme") private var appThemeRaw: String = AppTheme.system.rawValue
+    @AppStorage("enablePiP") private var enablePiP = true
+    @State private var pipPresented = false
+    @StateObject private var pipState = LocationSpoofingPiPState()
 
     private var backgroundStyle: BackgroundStyle {
         themeExpansion?.backgroundStyle(for: appThemeRaw) ?? AppTheme.system.backgroundStyle
@@ -136,7 +146,19 @@ struct LocationSimulationView: View {
             .onDisappear {
                 stopResendLoop()
                 endBackgroundTask()
+                dismissPiPSession()
             }
+            .onChange(of: enablePiP) { _, newValue in
+                if !newValue {
+                    pipPresented = false
+                }
+            }
+        }
+        .pipify(isPresented: Binding(
+            get: { pipPresented && enablePiP },
+            set: { pipPresented = $0 }
+        )) {
+            LocationSpoofingPiPView(state: pipState)
         }
     }
 
@@ -290,11 +312,13 @@ struct LocationSimulationView: View {
             showKeepOpenAlert = true
             beginBackgroundTask()
             startResendLoop()
+            recordPiPEvent(status: "Simulating…", coordinate: coord)
         } else {
             statusMessage = "Simulation failed (code \(code))."
             statusIsError = true
             stopResendLoop()
             endBackgroundTask()
+            dismissPiPSession()
         }
     }
 
@@ -306,6 +330,14 @@ struct LocationSimulationView: View {
         showKeepOpenAlert = false
         stopResendLoop()
         endBackgroundTask()
+        if code == 0 {
+            recordPiPEvent(status: "Simulation cleared", coordinate: nil)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                dismissPiPSession()
+            }
+        } else {
+            dismissPiPSession()
+        }
     }
     
     private func beginBackgroundTask() {
@@ -324,14 +356,35 @@ struct LocationSimulationView: View {
     private func startResendLoop() {
         resendTimer?.invalidate()
         resendTimer = Timer.scheduledTimer(withTimeInterval: 4, repeats: true) { _ in
-            guard pairingExists, let coord = coordinate else { return }
-            _ = simulate_location(deviceIP, coord.latitude, coord.longitude, pairingFilePath)
+            guard self.pairingExists, let coord = self.coordinate else { return }
+            _ = simulate_location(self.deviceIP, coord.latitude, coord.longitude, self.pairingFilePath)
+            self.recordPiPEvent(status: "Location refreshed", coordinate: coord)
+        }
+        if let coord = coordinate {
+            recordPiPEvent(status: "Simulating…", coordinate: coord)
         }
     }
 
     private func stopResendLoop() {
         resendTimer?.invalidate()
         resendTimer = nil
+    }
+    
+    private func recordPiPEvent(status: String, coordinate: CLLocationCoordinate2D?) {
+        DispatchQueue.main.async {
+            pipState.status = status
+            pipState.coordinate = coordinate
+            pipState.lastUpdated = Date()
+            pipPresented = true
+        }
+    }
+
+    private func dismissPiPSession() {
+        DispatchQueue.main.async {
+            pipPresented = false
+            pipState.lastUpdated = nil
+            pipState.coordinate = nil
+        }
     }
 }
 
@@ -340,4 +393,53 @@ private struct SearchResult: Identifiable {
     let name: String
     let subtitle: String
     let item: MKMapItem
+}
+
+private struct LocationSpoofingPiPView: View {
+    @ObservedObject var state: LocationSpoofingPiPState
+    
+    private static let relativeFormatter: RelativeDateTimeFormatter = {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .short
+        return formatter
+    }()
+    
+    private var coordinateText: String? {
+        guard let coordinate = state.coordinate else { return nil }
+        return String(format: "%.5f, %.5f", coordinate.latitude, coordinate.longitude)
+    }
+    
+    private var lastUpdatedText: String? {
+        guard let lastUpdated = state.lastUpdated else { return nil }
+        let label = Self.relativeFormatter.localizedString(for: lastUpdated, relativeTo: Date())
+        return "Last send \(label)"
+    }
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(state.status)
+                .font(.headline)
+                .foregroundColor(.white)
+            if let coordinateText {
+                Text(coordinateText)
+                    .font(.subheadline.monospaced())
+                    .foregroundColor(.white.opacity(0.9))
+            }
+            if let lastUpdatedText {
+                Text(lastUpdatedText)
+                    .font(.caption)
+                    .foregroundColor(.white.opacity(0.8))
+            }
+            Spacer()
+            Text("Location Spoofing")
+                .font(.caption2)
+                .foregroundColor(.white.opacity(0.7))
+        }
+        .padding()
+        .frame(width: 280, height: 150, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(Color.black.opacity(0.65))
+        )
+    }
 }

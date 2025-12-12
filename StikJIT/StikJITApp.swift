@@ -15,17 +15,9 @@ private func registerAdvancedOptionsDefault() {
     let os = ProcessInfo.processInfo.operatingSystemVersion
     // Enable advanced options by default on iOS 19/26 and above
     let enabled = os.majorVersion >= 19
-    let defaults = UserDefaults.standard
-    defaults.register(defaults: ["enableAdvancedOptions": enabled])
-    defaults.register(defaults: [UserDefaults.Keys.txmOverride: false])
-    if defaults.object(forKey: UserDefaults.Keys.enableContinuedProcessing) == nil {
-        let legacyPiP = defaults.object(forKey: "enablePiP") as? Bool
-        if let legacyPiP {
-            defaults.set(legacyPiP, forKey: UserDefaults.Keys.enableContinuedProcessing)
-        } else {
-            defaults.register(defaults: [UserDefaults.Keys.enableContinuedProcessing: enabled])
-        }
-    }
+    UserDefaults.standard.register(defaults: ["enableAdvancedOptions": enabled])
+    UserDefaults.standard.register(defaults: ["enablePiP": enabled])
+    UserDefaults.standard.register(defaults: [UserDefaults.Keys.txmOverride: false])
 }
 
 // MARK: - Welcome Sheet
@@ -527,7 +519,6 @@ struct HeartbeatApp: App {
     
     init() {
         registerAdvancedOptionsDefault()
-        ContinuedProcessingManager.shared.configureIfNeeded()
         newVerCheck()
         let fixMethod = class_getInstanceMethod(UIDocumentPickerViewController.self, #selector(UIDocumentPickerViewController.fix_init(forOpeningContentTypes:asCopy:)))!
         let origMethod = class_getInstanceMethod(UIDocumentPickerViewController.self, #selector(UIDocumentPickerViewController.init(forOpeningContentTypes:asCopy:)))!
@@ -567,7 +558,7 @@ struct HeartbeatApp: App {
     }
     
     private func triggerAutoVPNStartIfNeeded() {
-        guard autoStartVPN else { return }
+        guard autoStartVPN, DeviceConnectionContext.requiresLoopbackVPN else { return }
         let manager = TunnelManager.shared
         if manager.tunnelStatus == .disconnected || manager.tunnelStatus == .error {
             manager.startVPN()
@@ -696,12 +687,14 @@ class MountingProgress: ObservableObject {
     }
     
     private func mount() {
-        guard TunnelManager.shared.tunnelStatus == .connected else {
-            DispatchQueue.main.async {
-                self.coolisMounted = false
-                self.mountingThread = nil
+        if DeviceConnectionContext.requiresLoopbackVPN {
+            guard TunnelManager.shared.tunnelStatus == .connected else {
+                DispatchQueue.main.async {
+                    self.coolisMounted = false
+                    self.mountingThread = nil
+                }
+                return
             }
-            return
         }
         
         let currentlyMounted = isMounted()
@@ -718,6 +711,7 @@ class MountingProgress: ObservableObject {
             mountingThread = Thread { [weak self] in
                 guard let self = self else { return }
                 let mountResult = mountPersonalDDI(
+                    deviceIP: DeviceConnectionContext.targetIPAddress,
                     imagePath: URL.documentsDirectory.appendingPathComponent("DDI/Image.dmg").path,
                     trustcachePath: URL.documentsDirectory.appendingPathComponent("DDI/Image.dmg.trustcache").path,
                     manifestPath: URL.documentsDirectory.appendingPathComponent("DDI/BuildManifest.plist").path,
@@ -759,7 +753,7 @@ func isPairing() -> Bool {
     return true
 }
 
-func startHeartbeatInBackground(requireVPNConnection: Bool = true) {
+func startHeartbeatInBackground(requireVPNConnection: Bool? = nil) {
     assert(Thread.isMainThread, "startHeartbeatInBackground must be called on the main thread")
     let pairingFileURL = URL.documentsDirectory.appendingPathComponent("pairingFile.plist")
     
@@ -768,8 +762,9 @@ func startHeartbeatInBackground(requireVPNConnection: Bool = true) {
         return
     }
     
+    let shouldRequireVPN = requireVPNConnection ?? DeviceConnectionContext.requiresLoopbackVPN
     let vpnConnected = TunnelManager.shared.tunnelStatus == .connected
-    if requireVPNConnection && !vpnConnected {
+    if shouldRequireVPN && !vpnConnected {
         if !heartbeatStartPending {
             print("Heartbeat start deferred until VPN connects")
         }
@@ -843,7 +838,8 @@ func startHeartbeatInBackground(requireVPNConnection: Bool = true) {
 }
 
 func checkVPNConnection(callback: @escaping (Bool, String?) -> Void) {
-    let host = NWEndpoint.Host("10.7.0.1")
+    let targetIP = DeviceConnectionContext.targetIPAddress
+    let host = NWEndpoint.Host(targetIP)
     let port = NWEndpoint.Port(rawValue: 62078)!
     let connection = NWConnection(host: host, port: port, using: .tcp)
     var timeoutWorkItem: DispatchWorkItem?
@@ -853,7 +849,13 @@ func checkVPNConnection(callback: @escaping (Bool, String?) -> Void) {
             connection?.cancel()
             DispatchQueue.main.async {
                 if timeoutWorkItem?.isCancelled == false {
-                    callback(false, "[TIMEOUT] The loopback VPN is not connected. Try closing this app, turn it off and back on.")
+                    let message: String
+                    if DeviceConnectionContext.requiresLoopbackVPN {
+                        message = "[TIMEOUT] The loopback VPN is not connected. Try closing this app, turn it off and back on."
+                    } else {
+                        message = "[TIMEOUT] Could not reach the device at \(targetIP). Make sure it’s online and on the same network."
+                    }
+                    callback(false, message)
                 }
             }
         }
@@ -871,13 +873,19 @@ func checkVPNConnection(callback: @escaping (Bool, String?) -> Void) {
             timeoutWorkItem?.cancel()
             connection?.cancel()
             DispatchQueue.main.async {
-                if error == NWError.posix(.ETIMEDOUT) {
-                    callback(false, "The loopback VPN is not connected. Try closing the app, turn it off and back on.")
-                } else if error == NWError.posix(.ECONNREFUSED) {
-                    callback(false, "Wifi is not connected. StikJIT won't work on cellular data.")
+                let message: String
+                if DeviceConnectionContext.requiresLoopbackVPN {
+                    if error == NWError.posix(.ETIMEDOUT) {
+                        message = "The loopback VPN is not connected. Try closing the app, turn it off and back on."
+                    } else if error == NWError.posix(.ECONNREFUSED) {
+                        message = "Wi-Fi is not connected. StikDebug can't connect over cellular data while in loopback mode."
+                    } else {
+                        message = "VPN check error: \(error.localizedDescription)"
+                    }
                 } else {
-                    callback(false, "em proxy check error: \(error.localizedDescription)")
+                    message = "Could not reach the device at \(targetIP): \(error.localizedDescription)"
                 }
+                callback(false, message)
             }
         default:
             break

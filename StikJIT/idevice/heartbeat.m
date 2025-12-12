@@ -10,7 +10,7 @@
 #include <CoreFoundation/CoreFoundation.h>
 #include <limits.h>
 #include "heartbeat.h"
-#import <pthread.h>
+@import Foundation;
 
 int globalHeartbeatToken = 0;
 NSDate* lastHeartbeatDate = nil;

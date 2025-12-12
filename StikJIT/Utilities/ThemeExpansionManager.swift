@@ -87,6 +87,7 @@ final class ThemeExpansionManager: ObservableObject {
     @Published private(set) var distributor: DistributorType
     var isAppStoreBuild: Bool { distributor == .appStore }
     var shouldShowThemeExpansionUpsell: Bool {
+        guard !isForcedUnlocked else { return false }
         guard isAppStoreBuild else { return false }
         if let lastError, lastError == Self.unavailableMessage {
             return false
@@ -96,15 +97,17 @@ final class ThemeExpansionManager: ObservableObject {
 
     private var updatesTask: Task<Void, Never>?
     private let isPreviewInstance: Bool
+    private let isForcedUnlocked: Bool
     private let customThemesKey = "ThemeExpansion.CustomThemes"
 
     init(previewUnlocked: Bool = false) {
         self.isPreviewInstance = previewUnlocked
+        self.isForcedUnlocked = FeatureFlags.alwaysUnlockThemeExpansion
         self.distributor = ThemeExpansionManager.detectDistributor()
-        self.hasThemeExpansion = previewUnlocked
+        self.hasThemeExpansion = previewUnlocked || isForcedUnlocked
         loadCustomThemes()
 
-        if previewUnlocked && customThemes.isEmpty {
+        if (previewUnlocked || isForcedUnlocked) && customThemes.isEmpty {
             customThemes = [
                 CustomTheme(name: "Vapor Trail",
                             style: .animatedGradient,
@@ -113,7 +116,7 @@ final class ThemeExpansionManager: ObservableObject {
             ]
         }
 
-        guard !previewUnlocked else { return }
+        guard !(previewUnlocked || isForcedUnlocked) else { return }
 
         // Only wire StoreKit listeners if this is an App Store build
         if isAppStoreBuild {
@@ -141,6 +144,12 @@ final class ThemeExpansionManager: ObservableObject {
 
     func refreshEntitlements() async {
         guard !isPreviewInstance else { return }
+        guard !isForcedUnlocked else {
+            hasThemeExpansion = true
+            themeExpansionProduct = nil
+            lastError = nil
+            return
+        }
         guard isAppStoreBuild else { return } // No-op outside App Store
 
         isProcessing = true
@@ -171,6 +180,10 @@ final class ThemeExpansionManager: ObservableObject {
 
     func restorePurchases() async {
         guard !isPreviewInstance else { return }
+        guard !isForcedUnlocked else {
+            lastError = nil
+            return
+        }
         guard isAppStoreBuild else {
             lastError = Self.comingSoonMessage
             return
@@ -188,6 +201,11 @@ final class ThemeExpansionManager: ObservableObject {
 
     func purchaseThemeExpansion() async {
         guard !isPreviewInstance else { return }
+        guard !isForcedUnlocked else {
+            lastError = nil
+            hasThemeExpansion = true
+            return
+        }
         guard isAppStoreBuild else {
             lastError = Self.comingSoonMessage
             return

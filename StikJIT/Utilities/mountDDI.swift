@@ -19,8 +19,10 @@ func progressCallback(progress: size_t, total: size_t, context: UnsafeMutableRaw
 }
 
 func isMounted() -> Bool {
-    guard TunnelManager.shared.tunnelStatus == .connected else {
-        return false
+    if DeviceConnectionContext.requiresLoopbackVPN {
+        guard TunnelManager.shared.tunnelStatus == .connected else {
+            return false
+        }
     }
     
     do {

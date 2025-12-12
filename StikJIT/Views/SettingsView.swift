@@ -13,7 +13,7 @@ struct SettingsView: View {
     @AppStorage("enableAdvancedOptions") private var enableAdvancedOptions = false
     @AppStorage("enableAdvancedBetaOptions") private var enableAdvancedBetaOptions = false
     @AppStorage("enableTesting") private var enableTesting = false
-    @AppStorage(UserDefaults.Keys.enableContinuedProcessing) private var enableContinuedProcessing = false
+    @AppStorage("enablePiP") private var enablePiP = false
     @AppStorage(UserDefaults.Keys.txmOverride) private var overrideTXMDetection = false
     @AppStorage("customAccentColor") private var customAccentColorHex: String = ""
     @AppStorage("appTheme") private var appThemeRaw: String = AppTheme.system.rawValue
@@ -91,11 +91,14 @@ struct SettingsView: View {
             TabOption(id: "scripts", title: "Scripts", detail: "Manage automation scripts", icon: "scroll", isBeta: false),
             TabOption(id: "tools", title: "Mini Tools", detail: "Import and run stiktool bundles", icon: "shippingbox.fill", isBeta: false),
             TabOption(id: "profiles", title: "Profiles", detail: "Install/remove profiles", icon: "magazine.fill", isBeta: false),
-            TabOption(id: "processes", title: "Processes", detail: "Inspect running apps", icon: "rectangle.stack.person.crop", isBeta: true),
             TabOption(id: "deviceinfo", title: "Device Info", detail: "View detailed device metadata", icon: "iphone.and.arrow.forward", isBeta: false)
         ]
-        if FeatureFlags.isLocationSpoofingEnabled && !isAppStoreBuild {
-            options.append(TabOption(id: "location", title: "Location Sim", detail: "Sideload only", icon: "location", isBeta: true))
+        if FeatureFlags.showBetaTabs {
+            options.append(TabOption(id: "processes", title: "Processes", detail: "Inspect running apps", icon: "rectangle.stack.person.crop", isBeta: true))
+            options.append(TabOption(id: "devicelibrary", title: "Devices", detail: "Manage external devices", icon: "list.bullet.rectangle", isBeta: true))
+            if FeatureFlags.isLocationSpoofingEnabled && !isAppStoreBuild {
+                options.append(TabOption(id: "location", title: "Location Sim", detail: "Sideload only", icon: "location", isBeta: true))
+            }
         }
         return options
     }
@@ -267,7 +270,7 @@ struct SettingsView: View {
                                 .stroke(Color.white.opacity(0.12), lineWidth: 1)
                         )
                 }
-                Text("StikDebug")
+                Text("StikDebug 26")
                     .font(.title2.weight(.semibold))
                     .foregroundColor(.primary)
             }
@@ -405,7 +408,6 @@ struct SettingsView: View {
                             .stroke(Color.white.opacity(0.2), lineWidth: 0.5)
                     )
                 }
-                
                 if showPairingFileMessage && !isImportingFile {
                     HStack {
                         Image(systemName: "checkmark.circle.fill").foregroundColor(.green)
@@ -428,7 +430,8 @@ struct SettingsView: View {
                     .font(.headline)
                     .foregroundColor(.primary)
 
-                continuedProcessingToggle
+                Toggle("Picture in Picture", isOn: $enablePiP)
+                    .tint(accentColor)
                 Toggle(isOn: $overrideTXMDetection) {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Always Run Scripts")
@@ -443,7 +446,7 @@ struct SettingsView: View {
             }
             .onChange(of: enableAdvancedOptions) { _, newValue in
                 if !newValue {
-                    enableContinuedProcessing = false
+                    enablePiP = false
                     enableAdvancedBetaOptions = false
                     enableTesting = false
                 }
@@ -451,13 +454,6 @@ struct SettingsView: View {
             .onChange(of: enableAdvancedBetaOptions) { _, newValue in
                 if !newValue {
                     enableTesting = false
-                }
-            }
-            .onChange(of: enableContinuedProcessing) { _, newValue in
-                if newValue {
-                    ContinuedProcessingManager.shared.configureIfNeeded()
-                } else {
-                    ContinuedProcessingManager.shared.cancelPendingTasks()
                 }
             }
         }
@@ -515,24 +511,6 @@ struct SettingsView: View {
         }
     }
 
-    private var continuedProcessingToggle: some View {
-        Group {
-            if ContinuedProcessingManager.shared.isSupported {
-                Toggle("Allow Continued Processing", isOn: $enableContinuedProcessing)
-                    .tint(accentColor)
-            } else {
-                VStack(alignment: .leading, spacing: 4) {
-                    Toggle("Allow Continued Processing", isOn: .constant(false))
-                        .tint(accentColor)
-                        .disabled(true)
-                    Text("Requires iOS 26 or later.")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-            }
-        }
-    }
-    
     private var helpCard: some View {
         glassCard {
             VStack(alignment: .leading, spacing: 14) {
@@ -572,14 +550,6 @@ struct SettingsView: View {
                     .padding(.vertical, 8)
                 }
                 
-                HStack(alignment: .center, spacing: 8) {
-                    Image(systemName: "shield.slash")
-                        .font(.system(size: 18))
-                        .foregroundColor(.primary.opacity(0.8))
-                    Text("You can turn off the VPN in the Settings app.")
-                        .foregroundColor(.secondary)
-                }
-                .padding(.top, 4)
             }
         }
     }

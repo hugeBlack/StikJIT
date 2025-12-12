@@ -59,7 +59,7 @@ int install_ipa(const char *ip,
     addr.sin_port   = htons(LOCKDOWN_PORT);
     if (inet_pton(AF_INET, ip, &addr.sin_addr) != 1) {
         fprintf(stderr, "Invalid IP address: %s\n", ip);
-        return IPA_ERR_INVALID_IP;
+        return IPA_INSTALLER_ERR_INVALID_IP;
     }
 
     IdevicePairingFile *pairing_file = NULL;
@@ -69,7 +69,7 @@ int install_ipa(const char *ip,
         fprintf(stderr, "Pairing file read failed: [%d] %s\n",
                 err->code, err->message);
         idevice_error_free(err);
-        return IPA_ERR_PAIRING_READ;
+        return IPA_INSTALLER_ERR_PAIRING_READ;
     }
 
     IdeviceProviderHandle *provider = NULL;
@@ -82,7 +82,7 @@ int install_ipa(const char *ip,
                 err->code, err->message);
         idevice_pairing_file_free(pairing_file);
         idevice_error_free(err);
-        return IPA_ERR_PROVIDER_CREATE;
+        return IPA_INSTALLER_ERR_PROVIDER_CREATE;
     }
 
     AfcClientHandle *afc = NULL;
@@ -93,7 +93,7 @@ int install_ipa(const char *ip,
         idevice_provider_free(provider);
         idevice_pairing_file_free(pairing_file);
         idevice_error_free(err);
-        return IPA_ERR_AFC_CONNECT;
+        return IPA_INSTALLER_ERR_AFC_CONNECT;
     }
 
     uint8_t *ipa_data = NULL;
@@ -103,7 +103,7 @@ int install_ipa(const char *ip,
         afc_client_free(afc);
         idevice_provider_free(provider);
         idevice_pairing_file_free(pairing_file);
-        return IPA_ERR_IPA_READ;
+        return IPA_INSTALLER_ERR_IPA_READ;
     }
 
     const char *slash = strrchr(ipa_path, '/');
@@ -121,7 +121,7 @@ int install_ipa(const char *ip,
         idevice_provider_free(provider);
         idevice_pairing_file_free(pairing_file);
         idevice_error_free(err);
-        return IPA_ERR_AFC_OPEN;
+        return IPA_INSTALLER_ERR_AFC_OPEN;
     }
 
     err = afc_file_write(remote, ipa_data, ipa_len);
@@ -134,7 +134,7 @@ int install_ipa(const char *ip,
         idevice_provider_free(provider);
         idevice_pairing_file_free(pairing_file);
         idevice_error_free(err);
-        return IPA_ERR_AFC_WRITE;
+        return IPA_INSTALLER_ERR_AFC_WRITE;
     }
 
     InstallationProxyClientHandle *ipc = NULL;
@@ -146,7 +146,7 @@ int install_ipa(const char *ip,
         idevice_provider_free(provider);
         idevice_pairing_file_free(pairing_file);
         idevice_error_free(err);
-        return IPA_ERR_INSTALLPROXY_CONNECT;
+        return IPA_INSTALLER_ERR_INSTALLPROXY;
     }
 
     err = installation_proxy_install(ipc, dest, NULL);
@@ -158,9 +158,9 @@ int install_ipa(const char *ip,
         fprintf(stderr, "IPA install failed: [%d] %s\n",
                 err->code, err->message);
         idevice_error_free(err);
-        return IPA_ERR_INSTALL;
+        return IPA_INSTALLER_ERR_INSTALL;
     }
 
     fprintf(stderr, "IPA installed successfully\n");
-    return IPA_OK;
+    return IPA_INSTALLER_OK;
 }
