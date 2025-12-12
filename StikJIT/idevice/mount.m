@@ -5,7 +5,10 @@
 //  Created by s s on 2025/12/6.
 //
 #include "mount.h"
+#import "JITEnableContext.h"
+#import "JITEnableContextInternal.h"
 @import Foundation;
+
 NSError* makeError(int code, NSString* msg);
 size_t getMountedDeviceCount(IdeviceProviderHandle* provider, NSError** error) {
     ImageMounterHandle* client = 0;
@@ -97,3 +100,24 @@ int mountPersonalDDI(IdeviceProviderHandle* provider, IdevicePairingFile* pairin
     
     return 0;
 }
+
+@implementation JITEnableContext(DDI)
+- (NSUInteger)getMountedDeviceCount:(NSError**)error {
+    [self ensureHeartbeatWithError:error];
+    if(*error) {
+        return NO;
+    }
+    return getMountedDeviceCount(provider, error);
+}
+- (NSInteger)mountPersonalDDIWithImagePath:(NSString*)imagePath trustcachePath:(NSString*)trustcachePath manifestPath:(NSString*)manifestPath error:(NSError**)error {
+    [self ensureHeartbeatWithError:error];
+    if(*error) {
+        return 0;
+    }
+    IdevicePairingFile* pairing = [self getPairingFileWithError:error];
+    if(*error) {
+        return 0;
+    }
+    return mountPersonalDDI(provider, pairing, imagePath, trustcachePath, manifestPath, error);
+}
+@end

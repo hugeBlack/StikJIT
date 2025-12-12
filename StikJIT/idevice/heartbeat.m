@@ -10,6 +10,7 @@
 #include <CoreFoundation/CoreFoundation.h>
 #include <limits.h>
 #include "heartbeat.h"
+#include <pthread.h>
 @import Foundation;
 
 int globalHeartbeatToken = 0;
@@ -19,25 +20,27 @@ void startHeartbeat(IdevicePairingFile* pairing_file, IdeviceProviderHandle** pr
     IdeviceProviderHandle* newProvider = *provider;
     IdeviceFfiError* err = nil;
 
-        // Create the socket address (replace with your device's IP)
-        struct sockaddr_in addr;
-        memset(&addr, 0, sizeof(addr));
-        addr.sin_family = AF_INET;
-        addr.sin_port = htons(LOCKDOWN_PORT);
-        inet_pton(AF_INET, "10.7.0.1", &addr.sin_addr);
+    // Create the socket address (replace with your device's IP)
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(LOCKDOWN_PORT);
+    
+    NSString* deviceIP = [[NSUserDefaults standardUserDefaults] stringForKey:@"TunnelDeviceIP"];
+    inet_pton(AF_INET, deviceIP ? [deviceIP UTF8String] : "10.7.0.2", &addr.sin_addr);
+    
+    
+    err = idevice_tcp_provider_new((struct sockaddr *)&addr, pairing_file,
+                                   "ExampleProvider", &newProvider);
+    if (err != NULL) {
+        fprintf(stderr, "Failed to create TCP provider: [%d] %s", err->code,
+                err->message);
+        completion(err->code, err->message);
+        idevice_pairing_file_free(pairing_file);
+        idevice_error_free(err);
         
-
-        err = idevice_tcp_provider_new((struct sockaddr *)&addr, pairing_file,
-                                                        "ExampleProvider", &newProvider);
-        if (err != NULL) {
-            fprintf(stderr, "Failed to create TCP provider: [%d] %s", err->code,
-                    err->message);
-            completion(err->code, err->message);
-            idevice_pairing_file_free(pairing_file);
-            idevice_error_free(err);
-            
-            return;
-        }
+        return;
+    }
     
     // Connect to installation proxy
     HeartbeatClientHandle *client = NULL;

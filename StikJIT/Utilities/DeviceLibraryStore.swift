@@ -226,13 +226,7 @@ final class DeviceLibraryStore: ObservableObject {
         guard fileManager.fileExists(atPath: storedURL.path) else {
             throw DeviceLibraryError.pairingFileUnavailable
         }
-        let destinationURL = URL.documentsDirectory.appendingPathComponent("pairingFile.plist")
-        if fileManager.fileExists(atPath: destinationURL.path) {
-            try? fileManager.removeItem(at: destinationURL)
-        }
-        try fileManager.copyItem(at: storedURL, to: destinationURL)
-        try fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: destinationURL.path)
-        
+
         UserDefaults.standard.set(device.ipAddress, forKey: "TunnelDeviceIP")
         activeDeviceID = device.id
         UserDefaults.standard.set(device.id.uuidString, forKey: activeDeviceKey)

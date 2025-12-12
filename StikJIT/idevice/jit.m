@@ -17,6 +17,8 @@
 #include <limits.h>
 
 #include "jit.h"
+#import "JITEnableContext.h"
+#import "JITEnableContextInternal.h"
 
 void runDebugServerCommand(int pid,
                            DebugProxyHandle* debug_proxy,
@@ -424,3 +426,49 @@ cleanup:
 
     return result;
 }
+
+
+@implementation JITEnableContext(JIT)
+
+- (BOOL)debugAppWithBundleID:(NSString*)bundleID logger:(LogFunc)logger jsCallback:(DebugAppCallback)jsCallback {
+    NSError* err = nil;
+    [self ensureHeartbeatWithError:&err];
+    if(err) {
+        logger(err.localizedDescription);
+        return NO;
+    }
+    
+    return debug_app(provider,
+                     [bundleID UTF8String],
+                     [self createCLogger:logger], jsCallback) == 0;
+}
+
+- (BOOL)debugAppWithPID:(int)pid logger:(LogFunc)logger jsCallback:(DebugAppCallback)jsCallback {
+    NSError* err = nil;
+    [self ensureHeartbeatWithError:&err];
+    if(err) {
+        logger(err.localizedDescription);
+        return NO;
+    }
+    
+    return debug_app_pid(provider,
+                     pid,
+                     [self createCLogger:logger], jsCallback) == 0;
+}
+
+- (BOOL)launchAppWithoutDebug:(NSString*)bundleID logger:(LogFunc)logger {
+    NSError* err = nil;
+    [self ensureHeartbeatWithError:&err];
+    if(err) {
+        logger(err.localizedDescription);
+        return NO;
+    }
+
+    int result = launch_app_via_proxy(provider,
+                                      [bundleID UTF8String],
+                                      [self createCLogger:logger]);
+    return result == 0;
+}
+
+
+@end

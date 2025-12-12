@@ -10,6 +10,8 @@
 #include <stdlib.h>
 #include <string.h>
 #import "applist.h"
+#import "JITEnableContext.h"
+#import "JITEnableContextInternal.h"
 
 static NSString *extractAppName(plist_t app)
 {
@@ -206,3 +208,67 @@ UIImage* getAppIcon(IdeviceProviderHandle* provider, NSString* bundleID, NSStrin
     springboard_services_free(client);
     return icon;
 }
+
+@implementation JITEnableContext(App)
+
+- (NSDictionary<NSString*, NSString*>*)getAppListWithError:(NSError**)error {
+    [self ensureHeartbeatWithError:error];
+    if(*error) {
+        return nil;
+    }
+
+    NSString* errorStr = nil;
+    NSDictionary<NSString*, NSString*>* apps = list_installed_apps(provider, &errorStr);
+    if (errorStr) {
+        *error = [self errorWithStr:errorStr code:-17];
+        return nil;
+    }
+    return apps;
+}
+
+- (NSDictionary<NSString*, NSString*>*)getAllAppsWithError:(NSError**)error {
+    [self ensureHeartbeatWithError:error];
+    if(*error) {
+        return nil;
+    }
+
+    NSString* errorStr = nil;
+    NSDictionary<NSString*, NSString*>* apps = list_all_apps(provider, &errorStr);
+    if (errorStr) {
+        *error = [self errorWithStr:errorStr code:-17];
+        return nil;
+    }
+    return apps;
+}
+
+- (NSDictionary<NSString*, NSString*>*)getHiddenSystemAppsWithError:(NSError**)error {
+    [self ensureHeartbeatWithError:error];
+    if(*error) {
+        return nil;
+    }
+
+    NSString* errorStr = nil;
+    NSDictionary<NSString*, NSString*>* apps = list_hidden_system_apps(provider, &errorStr);
+    if (errorStr) {
+        *error = [self errorWithStr:errorStr code:-17];
+        return nil;
+    }
+    return apps;
+}
+
+- (UIImage*)getAppIconWithBundleId:(NSString*)bundleId error:(NSError**)error {
+    [self ensureHeartbeatWithError:error];
+    if(*error) {
+        return nil;
+    }
+
+    NSString* errorStr = nil;
+    UIImage* icon = getAppIcon(provider, bundleId, &errorStr);
+    if (errorStr) {
+        *error = [self errorWithStr:errorStr code:-17];
+        return nil;
+    }
+    return icon;
+}
+
+@end

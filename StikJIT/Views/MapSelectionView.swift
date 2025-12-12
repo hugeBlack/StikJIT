@@ -99,10 +99,22 @@ struct LocationSimulationView: View {
     }
 
     private var pairingFilePath: String {
-        FileManager.default
+        let docPathUrl = FileManager.default
             .urls(for: .documentDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("pairingFile.plist")
-            .path
+        let currentDeviceUUIDStr = UserDefaults.standard.string(forKey: "DeviceLibraryActiveDeviceID")
+
+        let pairingFileURL: URL
+        if let uuid = currentDeviceUUIDStr,
+           uuid != "00000000-0000-0000-0000-000000000001" {
+
+            pairingFileURL = docPathUrl.appendingPathComponent(
+                "DeviceLibrary/Pairings/\(uuid).mobiledevicepairing"
+            )
+        } else {
+            pairingFileURL = docPathUrl.appendingPathComponent("pairingFile.plist")
+        }
+        
+        return pairingFileURL.path()
     }
 
     private var pairingExists: Bool {

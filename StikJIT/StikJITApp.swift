@@ -711,7 +711,6 @@ class MountingProgress: ObservableObject {
             mountingThread = Thread { [weak self] in
                 guard let self = self else { return }
                 let mountResult = mountPersonalDDI(
-                    deviceIP: DeviceConnectionContext.targetIPAddress,
                     imagePath: URL.documentsDirectory.appendingPathComponent("DDI/Image.dmg").path,
                     trustcachePath: URL.documentsDirectory.appendingPathComponent("DDI/Image.dmg.trustcache").path,
                     manifestPath: URL.documentsDirectory.appendingPathComponent("DDI/BuildManifest.plist").path,
