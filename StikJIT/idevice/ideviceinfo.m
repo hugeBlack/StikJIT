@@ -19,11 +19,13 @@ LockdowndClientHandle* ideviceinfo_c_init(IdeviceProviderHandle* g_provider, Ide
     struct IdeviceFfiError * err = lockdownd_connect(g_provider, &g_client);
     if (err) {
         *error = makeError(err->code, @(err->message));
+        idevice_pairing_file_free(g_sess_pf);
         idevice_error_free(err);
         return 0;
     }
 
     err = lockdownd_start_session(g_client, g_sess_pf);
+    idevice_pairing_file_free(g_sess_pf);
     if (err) {
         *error = makeError(err->code, @(err->message));
         idevice_error_free(err);

@@ -30,7 +30,7 @@ size_t getMountedDeviceCount(IdeviceProviderHandle* provider, NSError** error) {
     for(int i = 0;i < deviceLength; ++i) {
         plist_free(devices[i]);
     }
-    idevice_data_free((uint8_t *)devices, deviceLength*sizeof(plist_t*));
+    idevice_data_free((uint8_t *)devices, deviceLength*sizeof(plist_t));
     image_mounter_free(client);
     return deviceLength;
 }
@@ -41,6 +41,7 @@ int mountPersonalDDI(IdeviceProviderHandle* provider, IdevicePairingFile* pairin
     NSData* trustcache = [NSData dataWithContentsOfFile:trustcachePath];
     NSData* buildManifest = [NSData dataWithContentsOfFile:manifestPath];
     if(!image || !trustcache || !buildManifest) {
+        idevice_pairing_file_free(pairingFile2);
         *error = makeError(1, @"Failed to read one or more files");
         return 1;
     }
@@ -49,11 +50,13 @@ int mountPersonalDDI(IdeviceProviderHandle* provider, IdevicePairingFile* pairin
     IdeviceFfiError* err = lockdownd_connect(provider, &lockdownClient);
     if (err) {
         *error = makeError(6, @(err->message));
+        idevice_pairing_file_free(pairingFile2);
         idevice_error_free(err);
         return 6;
     }
     
     err = lockdownd_start_session(lockdownClient, pairingFile2);
+    idevice_pairing_file_free(pairingFile2);
     if (err) {
         *error = makeError(7, @(err->message));
         idevice_error_free(err);

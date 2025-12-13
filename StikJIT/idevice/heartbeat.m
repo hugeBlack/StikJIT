@@ -71,7 +71,7 @@ void startHeartbeat(IdevicePairingFile* pairing_file, IdeviceProviderHandle** pr
             if(!completionCalled) {
                 completion(err->code, err->message);
             }
-//            heartbeat_client_free(client);
+            heartbeat_client_free(client);
             idevice_error_free(err);
             return;
         }
