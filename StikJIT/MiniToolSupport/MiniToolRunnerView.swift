@@ -5,6 +5,7 @@ struct MiniToolRunnerView: View {
     let tool: MiniToolBundle
     @StateObject private var runtime: MiniToolRuntime
     @State private var showLogs = false
+    @State private var initiated = false
 
     @AppStorage("appTheme") private var appThemeRaw: String = AppTheme.system.rawValue
     @Environment(\.themeExpansionManager) private var themeExpansion
@@ -40,7 +41,12 @@ struct MiniToolRunnerView: View {
         }
         .navigationTitle(tool.name)
         .navigationBarTitleDisplayMode(.inline)
-        .onAppear { runtime.start() }
+        .onAppear {
+            if !initiated {
+                runtime.start()
+                initiated = true
+            }
+        }
         .toolbar {
             ToolbarItemGroup(placement: .navigationBarTrailing) {
                 Button {
@@ -95,7 +101,7 @@ private struct MiniToolWebContainer: UIViewRepresentable {
     @ObservedObject var runtime: MiniToolRuntime
 
     func makeUIView(context: Context) -> WKWebView {
-        runtime.webView
+        runtime.webView!
     }
 
     func updateUIView(_ uiView: WKWebView, context: Context) {

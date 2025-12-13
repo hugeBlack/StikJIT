@@ -147,27 +147,28 @@ struct MiniToolListView: View {
                             .lineLimit(1)
                     }
                 }
+                
+                Spacer()
+
+                NavigationLink {
+                    MiniToolEditorView(tool: tool)
+                } label: {
+                    Image(systemName: "pencil")
+                        .foregroundColor(.primary)
+                }
+                .buttonStyle(.borderless)
+
+                Button(role: .destructive) {
+                    pendingDelete = tool
+                    showDeleteConfirmation = true
+                } label: {
+                    Image(systemName: "trash")
+                        .foregroundColor(.red)
+                }
+                .buttonStyle(.borderless)
             }
             .buttonStyle(.plain)
 
-            Spacer()
-
-            NavigationLink {
-                MiniToolEditorView(tool: tool)
-            } label: {
-                Image(systemName: "pencil")
-                    .foregroundColor(.primary)
-            }
-            .buttonStyle(.borderless)
-
-            Button(role: .destructive) {
-                pendingDelete = tool
-                showDeleteConfirmation = true
-            } label: {
-                Image(systemName: "trash")
-                    .foregroundColor(.red)
-            }
-            .buttonStyle(.borderless)
         }
         .padding(20)
         .background(glassyBackground)

@@ -9,36 +9,34 @@ final class MiniToolRuntime: NSObject, ObservableObject {
     @Published var logs: [String] = []
     @Published var isReady: Bool = false
 
-    var webView: WKWebView
+    var webView: WKWebView?
     private var context: JSContext?
 
     private var appXHRTasks: [String: URLSessionDataTask] = [:]
 
     private let messageHandlerName = "miniToolBridge"
+    
+    private var ideviceJSBridge : IDeviceJSBridge? = IDeviceJSBridge()
 
     init(tool: MiniToolBundle) {
         self.tool = tool
+        super.init()
         let configuration = WKWebViewConfiguration()
-//        configuration.setValue(true, forKey: "allowFileAccessFromFileURLs") // let the webview fetch other bundle assets
         let controller = WKUserContentController()
         controller.addUserScript(WKUserScript(source: MiniToolRuntime.frontendBridgeScript,
                                               injectionTime: .atDocumentStart,
                                               forMainFrameOnly: true))
         configuration.userContentController = controller
-
+        let leakAvoider = LeakAvoider(delegate: self)
+        configuration.setURLSchemeHandler(leakAvoider, forURLScheme: "app")
         webView = WKWebView(frame: .zero, configuration: configuration)
-
-        
-        super.init()
-        configuration.setURLSchemeHandler(self, forURLScheme: "app")
-        webView = WKWebView(frame: .zero, configuration: configuration)
-        controller.add(self, name: messageHandlerName)
-        webView.navigationDelegate = self
-        webView.isInspectable = true
+        controller.add(leakAvoider, name: messageHandlerName)
+        webView!.navigationDelegate = self
+        webView!.isInspectable = true
     }
 
     deinit {
-        webView.configuration.userContentController.removeScriptMessageHandler(forName: messageHandlerName)
+        webView!.configuration.userContentController.removeScriptMessageHandler(forName: messageHandlerName)
     }
 
     func start() {
@@ -61,8 +59,7 @@ final class MiniToolRuntime: NSObject, ObservableObject {
             return
         }
         isReady = false
-//        webView.loadFileURL(url, allowingReadAccessTo: tool.url)
-        webView.load(URLRequest(url: URL(string: "app://localhost")!))
+        webView!.load(URLRequest(url: URL(string: "app://\(tool.getHostName())")!))
     }
 
     private func loadBackground() {
@@ -82,10 +79,26 @@ final class MiniToolRuntime: NSObject, ObservableObject {
             
         }
         
+        let ideviceFunction: @convention(block) (Any?) -> JSValue = { [weak self] msg in
+            return JSValue.init(newPromiseIn: self?.context!) { resolve, reject in
+                if let msg = msg as? [String: Any] {
+                    if let bridge = self?.ideviceJSBridge {
+                        bridge.didReceiveScriptMessage(msg, resolve: resolve, reject: reject);
+                    } else {
+                        resolve?.call(withArguments: ["Current Runtime is Terminated."])
+                    }
+                }
+            }
+        }
         context?.setObject(sendToFrontend, forKeyedSubscript: "__miniToolPostMessage" as NSString)
         context?.setObject(logFunction, forKeyedSubscript: "__miniToolLog" as NSString)
+        context?.setObject(ideviceFunction, forKeyedSubscript: "__postIdeviceMessage" as NSString)
 
         context?.evaluateScript(MiniToolRuntime.backgroundBridgeScript)
+        if let ideviceJSURL = Bundle.main.url(forResource: "idevice", withExtension: "js"),
+           let ideviceJSText = try? String(contentsOf: ideviceJSURL, encoding: .utf8) {
+            context?.evaluateScript(ideviceJSText)
+        }
 
         do {
             let script = try String(contentsOf: tool.backgroundURL)
@@ -111,7 +124,7 @@ final class MiniToolRuntime: NSObject, ObservableObject {
         }
         DispatchQueue.main.async {
             let script = "window.miniTool && window.miniTool.__receive(\(json))"
-            self.webView.evaluateJavaScript(script) { _, error in
+            self.webView!.evaluateJavaScript(script) { _, error in
                 if let error {
                     self.appendLog("Frontend dispatch error: \(error.localizedDescription)")
                 }
@@ -132,6 +145,11 @@ extension MiniToolRuntime : WKURLSchemeHandler {
         start urlSchemeTask: WKURLSchemeTask
     ) {
         guard let url = urlSchemeTask.request.url else { return }
+        
+        guard let host = url.host(), host == tool.getHostName() else {
+            urlSchemeTask.didFailWithError(NSError(domain: "Invalid Host Name", code: 404))
+            return
+        }
 
         let path = url.path.isEmpty ? "index.html" : url.path
 
@@ -191,6 +209,18 @@ extension MiniToolRuntime: WKNavigationDelegate {
         isReady = true
         deliverToBackground(["type": "ui-ready", "tool": tool.name])
         deliverToFrontend(["type": "ready", "tool": tool.name])
+    }
+    
+    func webView(_ webView: WKWebView, navigationAction: WKNavigationAction, didBecome download: WKDownload) {
+        download.delegate = self
+    }
+        
+}
+
+extension MiniToolRuntime: WKDownloadDelegate {
+    
+    func download(_ download: WKDownload, decideDestinationUsing response: URLResponse, suggestedFilename: String) async -> URL? {
+        return MiniToolStore.toolsDataDirectory().appending(path: suggestedFilename, directoryHint: .notDirectory)
     }
 }
 
@@ -516,7 +546,6 @@ private extension MiniToolRuntime {
             DispatchQueue.main.async {
                 self.appXHRTasks[id] = nil
                 self.deliverAppXHRResponse(responsePayload)
-                print("RESPONSE: \(responsePayload)")
             }
         }
 
@@ -532,11 +561,38 @@ private extension MiniToolRuntime {
 
         DispatchQueue.main.async {
             let script = "window.XMLHttpRequest.__receive(\(json))"
-            self.webView.evaluateJavaScript(script) { _, error in
+            self.webView!.evaluateJavaScript(script) { _, error in
                 if let error {
                     self.appendLog("AppXHR deliver error: \(error.localizedDescription)")
                 }
             }
         }
     }
+}
+
+class LeakAvoider : NSObject, WKURLSchemeHandler, WKScriptMessageHandler, WKDownloadDelegate {
+    func download(_ download: WKDownload, decideDestinationUsing response: URLResponse, suggestedFilename: String) async -> URL? {
+        return await self.delegate?.download(download, decideDestinationUsing: response, suggestedFilename: suggestedFilename)
+    }
+    
+    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        self.delegate?.userContentController(userContentController, didReceive: message)
+    }
+    
+    func webView(_ webView: WKWebView, start urlSchemeTask: WKURLSchemeTask) {
+        self.delegate?.webView(webView, start: urlSchemeTask)
+    }
+    
+    func webView(_ webView: WKWebView, stop urlSchemeTask: WKURLSchemeTask) {
+        self.delegate?.webView(webView, stop: urlSchemeTask)
+    }
+    
+    
+    
+    weak var delegate : (WKURLSchemeHandler & WKScriptMessageHandler & WKDownloadDelegate)?
+    init (delegate:WKURLSchemeHandler & WKScriptMessageHandler & WKDownloadDelegate) {
+        self.delegate = delegate
+        super.init()
+    }
+    
 }

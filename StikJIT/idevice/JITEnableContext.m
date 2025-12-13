@@ -114,6 +114,10 @@ JITEnableContext* sharedJITContext = nil;
     return pairingFile;
 }
 
+- (IdeviceProviderHandle*)getTcpProviderHandle {
+    return provider;
+}
+
 // only block until first heartbeat is completed or failed.
 - (BOOL)startHeartbeat:(NSError**)err {
     os_unfair_lock_lock(&heartbeatLock);

@@ -12,6 +12,13 @@ struct MiniToolBundle: Identifiable, Hashable {
         let fm = FileManager.default
         return fm.fileExists(atPath: indexURL.path) && fm.fileExists(atPath: backgroundURL.path)
     }
+    
+    func getHostName() -> String {
+        let d = name.data(using: .utf8)
+        let b = d!.base64EncodedString().replacingOccurrences(of:"+", with:"").replacingOccurrences(of:"/", with:"").replacingOccurrences(of:"=", with:"")
+        
+        return "\(b).stiktool"
+    }
 }
 
 final class MiniToolStore: ObservableObject {
@@ -66,6 +73,21 @@ final class MiniToolStore: ObservableObject {
 
     func toolsDirectory() -> URL {
         let dir = URL.documentsDirectory.appendingPathComponent("tools", isDirectory: true)
+        var isDir: ObjCBool = false
+        let fm = FileManager.default
+        if fm.fileExists(atPath: dir.path, isDirectory: &isDir) {
+            if !isDir.boolValue {
+                try? fm.removeItem(at: dir)
+            }
+        }
+        if !fm.fileExists(atPath: dir.path) {
+            try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        }
+        return dir
+    }
+    
+    static func toolsDataDirectory() -> URL {
+        let dir = URL.documentsDirectory.appendingPathComponent("MiniToolData", isDirectory: true)
         var isDir: ObjCBool = false
         let fm = FileManager.default
         if fm.fileExists(atPath: dir.path, isDirectory: &isDir) {

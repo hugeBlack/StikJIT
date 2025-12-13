@@ -749,6 +749,7 @@ func isPairing() -> Bool {
         }
         return false
     }
+    idevice_pairing_file_free(pairingFile)
     return true
 }
 

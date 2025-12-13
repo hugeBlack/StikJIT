@@ -34,7 +34,7 @@ typedef void (^SyslogErrorHandler)(NSError *error);
 }
 @property (class, readonly)JITEnableContext* shared;
 - (IdevicePairingFile*)getPairingFileWithError:(NSError**)error;
-
+- (IdeviceProviderHandle*)getTcpProviderHandle;
 - (BOOL)ensureHeartbeatWithError:(NSError**)err;
 - (BOOL)startHeartbeat:(NSError**)err;
 
