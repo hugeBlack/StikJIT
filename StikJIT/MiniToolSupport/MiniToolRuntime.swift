@@ -1,4 +1,5 @@
 import Foundation
+import UniformTypeIdentifiers
 import SwiftUI
 import WebKit
 import JavaScriptCore
@@ -8,25 +9,32 @@ final class MiniToolRuntime: NSObject, ObservableObject {
     @Published var logs: [String] = []
     @Published var isReady: Bool = false
 
-    let webView: WKWebView
+    var webView: WKWebView
     private var context: JSContext?
+
+    private var appXHRTasks: [String: URLSessionDataTask] = [:]
 
     private let messageHandlerName = "miniToolBridge"
 
     init(tool: MiniToolBundle) {
         self.tool = tool
         let configuration = WKWebViewConfiguration()
+//        configuration.setValue(true, forKey: "allowFileAccessFromFileURLs") // let the webview fetch other bundle assets
         let controller = WKUserContentController()
         controller.addUserScript(WKUserScript(source: MiniToolRuntime.frontendBridgeScript,
                                               injectionTime: .atDocumentStart,
                                               forMainFrameOnly: true))
         configuration.userContentController = controller
+
         webView = WKWebView(frame: .zero, configuration: configuration)
 
+        
         super.init()
-
+        configuration.setURLSchemeHandler(self, forURLScheme: "app")
+        webView = WKWebView(frame: .zero, configuration: configuration)
         controller.add(self, name: messageHandlerName)
         webView.navigationDelegate = self
+        webView.isInspectable = true
     }
 
     deinit {
@@ -53,8 +61,8 @@ final class MiniToolRuntime: NSObject, ObservableObject {
             return
         }
         isReady = false
-        let url = tool.indexURL
-        webView.loadFileURL(url, allowingReadAccessTo: tool.url)
+//        webView.loadFileURL(url, allowingReadAccessTo: tool.url)
+        webView.load(URLRequest(url: URL(string: "app://localhost")!))
     }
 
     private func loadBackground() {
@@ -118,11 +126,56 @@ final class MiniToolRuntime: NSObject, ObservableObject {
     }
 }
 
+extension MiniToolRuntime : WKURLSchemeHandler {
+    func webView(
+        _ webView: WKWebView,
+        start urlSchemeTask: WKURLSchemeTask
+    ) {
+        guard let url = urlSchemeTask.request.url else { return }
+
+        let path = url.path.isEmpty ? "index.html" : url.path
+
+        let fileURL = tool.url
+            .appendingPathComponent(path)
+
+        do {
+            let data = try Data(contentsOf: fileURL)
+            let mimeType : String
+            if let type = UTType(filenameExtension: fileURL.pathExtension), let mimetype = type.preferredMIMEType  {
+                mimeType = mimetype
+            } else {
+                mimeType = UTType.data.preferredMIMEType!
+            }
+
+            let response = URLResponse(
+                url: url,
+                mimeType: mimeType,
+                expectedContentLength: data.count,
+                textEncodingName: nil
+            )
+
+            urlSchemeTask.didReceive(response)
+            urlSchemeTask.didReceive(data)
+            urlSchemeTask.didFinish()
+        } catch {
+            urlSchemeTask.didFailWithError(error)
+        }
+    }
+    
+    func webView(_ webView: WKWebView, stop urlSchemeTask: any WKURLSchemeTask) {
+        
+    }
+}
+
 // MARK: - WKScriptMessageHandler
 
 extension MiniToolRuntime: WKScriptMessageHandler {
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
         guard message.name == messageHandlerName else { return }
+        if let dict = message.body as? [String: Any], dict["__appXHR"] as? Bool == true {
+            handleAppXHRMessage(dict)
+            return
+        }
         if let dict = message.body as? [String: Any], let payload = dict["payload"] {
             deliverToBackground(payload)
         } else {
@@ -160,6 +213,182 @@ extension MiniToolRuntime {
                 console.error(err);
             }
         };
+
+        (function() {
+            const handler = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.miniToolBridge;
+            function safePostMessage(body) {
+                if (!handler || !handler.postMessage) {
+                    console.error('miniToolBridge unavailable for AppXMLHttpRequest');
+                    return;
+                }
+                handler.postMessage(body);
+            }
+
+            function base64ToArrayBuffer(base64) {
+                const binaryString = atob(base64);
+                const len = binaryString.length;
+                const bytes = new Uint8Array(len);
+                for (let i = 0; i < len; i++) {
+                    bytes[i] = binaryString.charCodeAt(i);
+                }
+                return bytes.buffer;
+            }
+
+            class AppXMLHttpRequest {
+                constructor() {
+                    this.readyState = 0;
+                    this.status = 0;
+                    this.statusText = '';
+                    this.responseText = '';
+                    this.response = null;
+                    this.responseType = '';
+                    this.onreadystatechange = null;
+                    this.onload = null;
+                    this.onerror = null;
+                    this.onabort = null;
+                    this._headers = {};
+                    this._method = null;
+                    this._url = null;
+                    this._async = true;
+                    this._aborted = false;
+                    this._id = AppXMLHttpRequest.__nextId();
+                }
+
+                open(method, url, async = true) {
+                    this._method = method;
+                    this._url = url;
+                    this._async = async !== false;
+                    this.readyState = 1; // OPENED
+                    this._emitReadyState();
+                }
+
+                setRequestHeader(key, value) {
+                    this._headers[key] = value;
+                }
+
+                send(body = null) {
+                    if (!this._method || !this._url) {
+                        throw new Error('AppXMLHttpRequest: call open() before send().');
+                    }
+
+                    this.readyState = 2; // HEADERS_RECEIVED (simulated)
+                    this._emitReadyState();
+
+                    AppXMLHttpRequest.__pending[this._id] = this;
+
+                    let encodedBody = null;
+                    let bodyIsBase64 = false;
+                    if (typeof body === 'string') {
+                        encodedBody = body;
+                    } else if (body instanceof ArrayBuffer || ArrayBuffer.isView(body)) {
+                        const view = body instanceof ArrayBuffer ? new Uint8Array(body) : new Uint8Array(body.buffer, body.byteOffset || 0, body.byteLength || body.length || 0);
+                        let binary = '';
+                        for (let i = 0; i < view.length; i++) {
+                            binary += String.fromCharCode(view[i]);
+                        }
+                        encodedBody = btoa(binary);
+                        bodyIsBase64 = true;
+                    } else if (body != null) {
+                        try {
+                            encodedBody = JSON.stringify(body);
+                        } catch (err) {
+                            console.error('AppXMLHttpRequest: unable to serialize body', err);
+                        }
+                    }
+
+                    safePostMessage({
+                        __appXHR: true,
+                        action: 'request',
+                        id: this._id,
+                        method: this._method,
+                        url: this._url,
+                        async: this._async,
+                        headers: this._headers,
+                        body: encodedBody,
+                        bodyIsBase64: bodyIsBase64,
+                        responseType: this.responseType
+                    });
+                }
+
+                abort() {
+                    this._aborted = true;
+                    safePostMessage({ __appXHR: true, action: 'abort', id: this._id });
+                }
+
+                _complete(payload) {
+                    if (this._aborted && !payload.aborted) {
+                        return;
+                    }
+
+                    this.status = payload.status || 0;
+                    this.statusText = payload.statusText || '';
+                    this.responseText = payload.responseText || '';
+                    const base64 = payload.base64 || null;
+
+                    if (this.responseType === 'json') {
+                        try {
+                            this.response = this.responseText ? JSON.parse(this.responseText) : null;
+                        } catch (err) {
+                            console.error('AppXMLHttpRequest: failed to parse JSON response', err);
+                            this.response = null;
+                        }
+                    } else if (this.responseType === 'arraybuffer' && base64) {
+                        this.response = base64ToArrayBuffer(base64);
+                    } else {
+                        this.response = this.responseText;
+                    }
+
+                    this.readyState = 4; // DONE
+                    this._emitReadyState();
+
+                    if (payload.aborted) {
+                        if (typeof this.onabort === 'function') {
+                            try { this.onabort(); } catch (err) { console.error(err); }
+                        }
+                        delete AppXMLHttpRequest.__pending[this._id];
+                        return;
+                    }
+
+                    if (payload.error) {
+                        if (typeof this.onerror === 'function') {
+                            try { this.onerror(new Error(payload.error)); } catch (err) { console.error(err); }
+                        }
+                    } else if (typeof this.onload === 'function') {
+                        try { this.onload(); } catch (err) { console.error(err); }
+                    }
+
+                    delete AppXMLHttpRequest.__pending[this._id];
+                }
+
+                _emitReadyState() {
+                    if (typeof this.onreadystatechange === 'function') {
+                        try {
+                            this.onreadystatechange();
+                        } catch (err) {
+                            console.error(err);
+                        }
+                    }
+                }
+
+                static __nextId() {
+                    AppXMLHttpRequest.__counter += 1;
+                    return `app-xhr-${AppXMLHttpRequest.__counter}`;
+                }
+
+                static __receive(payload) {
+                    const instance = AppXMLHttpRequest.__pending[payload.id];
+                    if (instance) {
+                        instance._complete(payload);
+                    }
+                }
+            }
+
+            AppXMLHttpRequest.__counter = 0;
+            AppXMLHttpRequest.__pending = {};
+
+            window.__XMLHttpRequest = window.XMLHttpRequest;
+            window.XMLHttpRequest = AppXMLHttpRequest; // alias with requested casing
+        })();
     """
 
     static let backgroundBridgeScript = """
@@ -195,5 +424,119 @@ extension MiniToolRuntime {
             return number.stringValue
         }
         return nil
+    }
+}
+
+// MARK: - App-backed XHR
+
+private extension MiniToolRuntime {
+    func handleAppXHRMessage(_ payload: [String: Any]) {
+        guard let id = payload["id"] as? String else {
+            appendLog("AppXHR missing id")
+            return
+        }
+
+        let action = payload["action"] as? String ?? "request"
+
+        if action == "abort" {
+            if let task = appXHRTasks[id] {
+                task.cancel()
+                appXHRTasks[id] = nil
+            }
+            deliverAppXHRResponse(["id": id, "status": 0, "statusText": "aborted", "aborted": true])
+            return
+        }
+
+        guard let urlString = payload["url"] as? String, let url = URL(string: urlString) else {
+            appendLog("AppXHR invalid URL for id \(id)")
+            deliverAppXHRResponse(["id": id, "status": 0, "statusText": "invalid-url", "error": "Invalid URL"])
+            return
+        }
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = (payload["method"] as? String) ?? "GET"
+
+        if let headers = payload["headers"] as? [String: Any] {
+            headers.forEach { key, value in
+                if let valueString = value as? String ?? (value as? NSNumber)?.stringValue {
+                    request.setValue(valueString, forHTTPHeaderField: key)
+                }
+            }
+        }
+
+        if let body = payload["body"] {
+            let isBase64 = payload["bodyIsBase64"] as? Bool ?? false
+            if let stringBody = body as? String {
+                if isBase64, let data = Data(base64Encoded: stringBody) {
+                    request.httpBody = data
+                } else {
+                    request.httpBody = stringBody.data(using: .utf8)
+                }
+            } else if JSONSerialization.isValidJSONObject(body),
+                      let data = try? JSONSerialization.data(withJSONObject: body, options: []) {
+                request.httpBody = data
+            }
+        }
+
+        let task = URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
+            guard let self else { return }
+
+            var responsePayload: [String: Any] = [
+                "id": id,
+                "status": 0,
+                "statusText": ""
+            ]
+
+            if let http = response as? HTTPURLResponse {
+                responsePayload["status"] = http.statusCode
+                responsePayload["statusText"] = HTTPURLResponse.localizedString(forStatusCode: http.statusCode)
+
+                let headers = http.allHeaderFields.reduce(into: [String: String]()) { partialResult, entry in
+                    if let key = entry.key as? String {
+                        partialResult[key] = String(describing: entry.value)
+                    }
+                }
+                responsePayload["headers"] = headers
+            }
+
+            if let error = error as NSError? {
+                if error.code == NSURLErrorCancelled {
+                    responsePayload["aborted"] = true
+                    responsePayload["statusText"] = "aborted"
+                } else {
+                    responsePayload["error"] = error.localizedDescription
+                }
+            }
+
+            if let data = data {
+                responsePayload["responseText"] = String(data: data, encoding: .utf8) ?? ""
+                responsePayload["base64"] = data.base64EncodedString()
+            }
+
+            DispatchQueue.main.async {
+                self.appXHRTasks[id] = nil
+                self.deliverAppXHRResponse(responsePayload)
+                print("RESPONSE: \(responsePayload)")
+            }
+        }
+
+        appXHRTasks[id] = task
+        task.resume()
+    }
+
+    func deliverAppXHRResponse(_ payload: [String: Any]) {
+        guard let json = MiniToolRuntime.encodePayload(payload) else {
+            appendLog("AppXHR: Unable to encode response for id \(payload["id"] ?? "<unknown>")")
+            return
+        }
+
+        DispatchQueue.main.async {
+            let script = "window.XMLHttpRequest.__receive(\(json))"
+            self.webView.evaluateJavaScript(script) { _, error in
+                if let error {
+                    self.appendLog("AppXHR deliver error: \(error.localizedDescription)")
+                }
+            }
+        }
     }
 }
