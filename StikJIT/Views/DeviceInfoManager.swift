@@ -9,14 +9,11 @@ import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
 
-@_silgen_name("ideviceinfo_c_init")
-private func c_deviceinfo_init(_ path: UnsafePointer<CChar>) -> Int32
-@_silgen_name("ideviceinfo_c_get_xml")
-private func c_deviceinfo_get_xml() -> UnsafePointer<CChar>?
-@_silgen_name("ideviceinfo_c_cleanup")
-private func c_deviceinfo_cleanup()
-
 // MARK: - Device Info Manager
+
+struct LockdownClientSendable: @unchecked Sendable {
+    let raw: OpaquePointer
+}
 
 @MainActor
 final class DeviceInfoManager: ObservableObject {
@@ -25,35 +22,54 @@ final class DeviceInfoManager: ObservableObject {
     @Published var error: (title: String, message: String)?
     private var initialized = false
     private let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+    
+    private var lockdownHandle: LockdownClientSendable? = nil
 
     func initAndLoad() {
         guard !initialized else { loadInfo(); return }
         busy = true
-        let path = docs.appendingPathComponent("pairingFile.plist").path
         Task.detached {
-            let code = path.withCString { c_deviceinfo_init($0) }
-            await MainActor.run {
-                if code != 0 {
-                    self.error = ("Initialization Failed", self.initErrorMessage(code))
+            do {
+                try JITEnableContext.shared.ensureHeartbeat()
+            } catch {
+                await MainActor.run {
+                    self.error = ("Initialization Failed", self.initErrorMessage(Int32((error as NSError).code)))
                     self.busy = false
-                } else {
+                }
+            }
+            do {
+                let lockdownHandle = LockdownClientSendable(raw: try JITEnableContext.shared.ideviceInfoInit())
+                
+                await MainActor.run {
+                    self.lockdownHandle = lockdownHandle
                     self.initialized = true
                     self.loadInfo()
                 }
+            } catch {
+                await MainActor.run {
+                    self.error = ("Initialization Failed", self.initErrorMessage(Int32((error as NSError).code)))
+                    self.busy = false
+                }
             }
+
         }
     }
 
     private func loadInfo() {
         busy = true
         Task.detached {
-            guard let cXml = c_deviceinfo_get_xml() else {
+            var cXml : UnsafeMutablePointer<CChar>? = nil;
+            do {
+                cXml = try await JITEnableContext.shared.ideviceInfoGetXML(withLockdownClient: self.lockdownHandle?.raw)
+            } catch {
                 await MainActor.run {
-                    self.error = ("Fetch Error", "Failed to fetch device info")
+                    self.error = ("Fetch Error", "Failed to fetch device info \(error)")
                     self.busy = false
                 }
                 return
             }
+            guard let cXml else { return }
+            
             defer { free(UnsafeMutableRawPointer(mutating: cXml)) }
             guard let xml = String(validatingUTF8: cXml) else {
                 await MainActor.run {
@@ -83,7 +99,11 @@ final class DeviceInfoManager: ObservableObject {
     }
 
     func cleanup() {
-        c_deviceinfo_cleanup()
+        if let lockdownHandle {
+            lockdownd_client_free(lockdownHandle.raw)
+            self.lockdownHandle = nil
+        }
+
         initialized = false
     }
 

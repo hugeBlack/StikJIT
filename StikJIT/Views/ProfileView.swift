@@ -181,7 +181,7 @@ struct ProfileView: View {
                 if confirmRemove {
                     CustomErrorView(
                         title: "Confirm Removal",
-                        message: "Remove profile for \(removeTargetName) (UUID: \(removeTargetUUID))?\n**Apps associated this profile may become unavailable.**",
+                        message: "Remove profile for \(removeTargetName) (UUID: \(removeTargetUUID))?\n**Apps associated with this profile may become unavailable.**",
                         onDismiss: { confirmRemove = false },
                         showButton: true,
                         primaryButtonText: "Remove",

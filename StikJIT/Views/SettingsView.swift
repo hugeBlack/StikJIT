@@ -89,7 +89,8 @@ struct SettingsView: View {
             TabOption(id: "home", title: "Home", detail: "Dashboard overview", icon: "house", isBeta: false),
             TabOption(id: "console", title: "Console", detail: "Live device logs", icon: "terminal", isBeta: false),
             TabOption(id: "scripts", title: "Scripts", detail: "Manage automation scripts", icon: "scroll", isBeta: false),
-            TabOption(id: "profiles", title: "Profiles", detail: "Install/remove profiles", icon: "magazine.fill", isBeta: false),
+            TabOption(id: "tools", title: "Mini Tools", detail: "Import and run stiktool bundles", icon: "shippingbox", isBeta: false),
+            TabOption(id: "profiles", title: "Profiles", detail: "Install/remove profiles", icon: "magazine", isBeta: false),
             TabOption(id: "deviceinfo", title: "Device Info", detail: "View detailed device metadata", icon: "iphone.and.arrow.forward", isBeta: false)
         ]
         if FeatureFlags.showBetaTabs {

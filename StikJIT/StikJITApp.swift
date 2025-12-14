@@ -638,12 +638,7 @@ struct HeartbeatApp: App {
                 }
             }
         }
-        .onChange(of: scenePhase) { newPhase in
-            if newPhase == .active {
-                print("App became active – restarting heartbeat")
-                startHeartbeatInBackground()
-            }
-        }
+
     }
 }
 
@@ -706,8 +701,7 @@ class MountingProgress: ObservableObject {
         DispatchQueue.main.async {
             self.coolisMounted = currentlyMounted
         }
-        let pairingpath = URL.documentsDirectory.appendingPathComponent("pairingFile.plist").path
-        
+
         if isPairing(), !currentlyMounted {
             if let mountingThread = mountingThread {
                 mountingThread.cancel()
@@ -717,11 +711,9 @@ class MountingProgress: ObservableObject {
             mountingThread = Thread { [weak self] in
                 guard let self = self else { return }
                 let mountResult = mountPersonalDDI(
-                    deviceIP: DeviceConnectionContext.targetIPAddress,
                     imagePath: URL.documentsDirectory.appendingPathComponent("DDI/Image.dmg").path,
                     trustcachePath: URL.documentsDirectory.appendingPathComponent("DDI/Image.dmg.trustcache").path,
                     manifestPath: URL.documentsDirectory.appendingPathComponent("DDI/BuildManifest.plist").path,
-                    pairingFilePath: pairingpath
                 )
                 
                 DispatchQueue.main.async {
@@ -757,6 +749,7 @@ func isPairing() -> Bool {
         }
         return false
     }
+    idevice_pairing_file_free(pairingFile)
     return true
 }
 
@@ -786,63 +779,62 @@ func startHeartbeatInBackground(requireVPNConnection: Bool? = nil) {
     heartbeatStartPending = false
     heartbeatStartInProgress = true
     
-    let heartBeatThread = Thread {
+    DispatchQueue.global(qos: .userInteractive).async {
         defer {
             DispatchQueue.main.async {
                 heartbeatStartInProgress = false
             }
         }
-        let completionHandler: @convention(block) (Int32, String?) -> Void = { result, message in
-            if result == 0 {
-                print("Heartbeat started successfully: \(message ?? "")")
-                pubHeartBeat = true
+        do {
+            try JITEnableContext.shared.startHeartbeat()
+            print("Heartbeat started successfully")
+            pubHeartBeat = true
+            
+            if FileManager.default.fileExists(atPath: URL.documentsDirectory.appendingPathComponent("DDI/Image.dmg.trustcache").path) {
                 
-                if FileManager.default.fileExists(atPath: URL.documentsDirectory.appendingPathComponent("DDI/Image.dmg.trustcache").path) {
-                    MountingProgress.shared.pubMount()
-                }
-            } else {
-                print("Error: \(message ?? "") (Code: \(result))")
-                DispatchQueue.main.async {
-                    if result == -9 {
-                        do {
-                            try FileManager.default.removeItem(at: URL.documentsDirectory.appendingPathComponent("pairingFile.plist"))
-                            print("Removed invalid pairing file")
-                        } catch {
-                            print("Error removing invalid pairing file: \(error)")
-                        }
-                        
-                        showAlert(
-                            title: "Invalid Pairing File",
-                            message: "The pairing file is invalid or expired. Please select a new pairing file.",
-                            showOk: true,
-                            showTryAgain: false,
-                            primaryButtonText: "Select New File"
-                        ) { _ in
-                            NotificationCenter.default.post(name: NSNotification.Name("ShowPairingFilePicker"), object: nil)
-                        }
-                    } else {
-                        showAlert(
-                            title: "Heartbeat Error",
-                            message: "Failed to connect to Heartbeat (\(result)). Are you connected to WiFi or is Airplane Mode enabled? Cellular data isn’t supported. Please launch the app at least once with WiFi enabled. After that, you can switch to cellular data to turn on the VPN, and once the VPN is active you can use Airplane Mode.",
-                            showOk: false,
-                            showTryAgain: true
-                        ) { shouldTryAgain in
-                            if shouldTryAgain {
-                                DispatchQueue.main.async {
-                                    startHeartbeatInBackground()
-                                }
+//                MountingProgress.shared.pubMount()
+            }
+        } catch {
+            let err2 = error as NSError
+            let code = err2.code
+            print("Error: \(error.localizedDescription) (Code: \(code))")
+            DispatchQueue.main.async {
+                if code == -9 {
+                    do {
+                        try FileManager.default.removeItem(at: URL.documentsDirectory.appendingPathComponent("pairingFile.plist"))
+                        print("Removed invalid pairing file")
+                    } catch {
+                        print("Error removing invalid pairing file: \(error)")
+                    }
+                    
+                    showAlert(
+                        title: "Invalid Pairing File",
+                        message: "The pairing file is invalid or expired. Please select a new pairing file.",
+                        showOk: true,
+                        showTryAgain: false,
+                        primaryButtonText: "Select New File"
+                    ) { _ in
+                        NotificationCenter.default.post(name: NSNotification.Name("ShowPairingFilePicker"), object: nil)
+                    }
+                } else {
+                    showAlert(
+                        title: "Heartbeat Error",
+                        message: "Failed to connect to Heartbeat (\(code)). Are you connected to WiFi or is Airplane Mode enabled? Cellular data isn’t supported. Please launch the app at least once with WiFi enabled. After that, you can switch to cellular data to turn on the VPN, and once the VPN is active you can use Airplane Mode.",
+                        showOk: false,
+                        showTryAgain: true
+                    ) { shouldTryAgain in
+                        if shouldTryAgain {
+                            DispatchQueue.main.async {
+                                startHeartbeatInBackground()
                             }
                         }
                     }
                 }
             }
         }
-        JITEnableContext.shared.startHeartbeat(completionHandler: completionHandler, logger: nil)
     }
     
-    heartBeatThread.qualityOfService = .background
-    heartBeatThread.name = "Heartbeat"
-    heartBeatThread.start()
+
 }
 
 func checkVPNConnection(callback: @escaping (Bool, String?) -> Void) {

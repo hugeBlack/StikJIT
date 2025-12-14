@@ -3,7 +3,7 @@ import Foundation
 enum TabConfiguration {
     static let storageKey = "enabledTabIdentifiers"
     static let maxSelectableTabs = 4
-    private static let coreIDs: [String] = ["home", "console", "scripts", "profiles", "deviceinfo"]
+    private static let coreIDs: [String] = ["home", "console", "scripts", "profiles", "deviceinfo", "tools"]
     static var allowedIDs: [String] {
         var ids = coreIDs
         if FeatureFlags.showBetaTabs {

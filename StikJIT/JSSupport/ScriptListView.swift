@@ -441,7 +441,7 @@ struct ScriptListView: View {
 }
 
 // MARK: - Equal-width rounded-rectangle button (centered content)
-private struct WideGlassyButton: View {
+struct WideGlassyButton: View {
     let title: String
     let systemImage: String
     let action: () -> Void

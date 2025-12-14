@@ -158,9 +158,6 @@ struct ConsoleLogsView: View {
         }
         .navigationViewStyle(.stack)
         .preferredColorScheme(preferredScheme)
-        .onAppear {
-            startHeartbeatInBackground()
-        }
         .onDisappear {
             systemLogStream.stop()
         }
@@ -716,7 +713,6 @@ struct ConsoleLogsView: View {
 
     private func toggleSyslogPlayback() {
         if !systemLogStream.isStreaming {
-            startHeartbeatInBackground()
             systemLogStream.start()
         } else {
             systemLogStream.togglePause()
