@@ -1466,6 +1466,8 @@ struct HomeView: View {
                 return ("Geode", "Geode.js")
             case "MeloNX":
                 return ("MeloNX", "MeloNX.js")
+            case "Manic EMU":
+                return ("manic", "manic.js")
             case "UTM", "DolphiniOS":
                 return ("UTM-Dolphin", "UTM-Dolphin.js")
             default:
