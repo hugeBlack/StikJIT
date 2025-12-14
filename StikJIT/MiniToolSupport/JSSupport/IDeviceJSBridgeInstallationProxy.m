@@ -9,11 +9,12 @@
 #import "JSSupport.h"
 
 struct InstallationProxyCallbackContext {
-    JSValue* callback;
+    int callbackId;
+    JSContext* context;
 };
 
 void installationProxyCallback(uint64_t progress, struct InstallationProxyCallbackContext* context) {
-    [context->callback callWithArguments:@[@(progress)]];
+    [context->context evaluateScript:[NSString stringWithFormat:@"handle_installation_proxy_js_callback(%d, %llu)", context->callbackId, progress]];
 }
 
 @implementation IDeviceJSBridge (InstallationProxy)
@@ -116,16 +117,14 @@ void installationProxyCallback(uint64_t progress, struct InstallationProxyCallba
         plist_from_memory((void*)[optionsNSData bytes], (uint32_t)[optionsNSData length], &optionsPlist, 0);
     }
     
-//    JSValue* callback = body[@"callback"];
-    // TODO implement real callback
-    JSValue* callback = nil;
+    int callbackId = [body[@"callback_id"] intValue];
     IdeviceFfiError* err = 0;
-    if(!callback) {
+    if(callbackId == -1) {
         err = installation_proxy_install(client, [packagePath UTF8String], optionsPlist);
     } else {
         struct InstallationProxyCallbackContext context;
-        context.callback = callback;
-        
+        context.callbackId = callbackId;
+        context.context = self->context;
         err = installation_proxy_install_with_callback(client, [packagePath UTF8String], optionsPlist, (void (*)(uint64_t, void *))installationProxyCallback, &context);
 
     }
@@ -170,14 +169,14 @@ void installationProxyCallback(uint64_t progress, struct InstallationProxyCallba
         plist_from_memory((void*)[optionsNSData bytes], (uint32_t)[optionsNSData length], &optionsPlist, 0);
     }
     
-    JSValue* callback = body[@"callback"];
+    int callbackId = [body[@"callback_id"] intValue];
     IdeviceFfiError* err = 0;
-    if(!callback) {
+    if(callbackId == -1) {
         err = installation_proxy_upgrade(client, [packagePath UTF8String], optionsPlist);
     } else {
         struct InstallationProxyCallbackContext context;
-        context.callback = callback;
-        
+        context.callbackId = callbackId;
+        context.context = self->context;
         err = installation_proxy_upgrade_with_callback(client, [packagePath UTF8String], optionsPlist, (void (*)(uint64_t, void *))installationProxyCallback, &context);
 
     }
@@ -222,14 +221,14 @@ void installationProxyCallback(uint64_t progress, struct InstallationProxyCallba
         plist_from_memory((void*)[optionsNSData bytes], (uint32_t)[optionsNSData length], &optionsPlist, 0);
     }
     
-    JSValue* callback = body[@"callback"];
+    int callbackId = [body[@"callback_id"] intValue];
     IdeviceFfiError* err = 0;
-    if(!callback) {
+    if(callbackId == -1) {
         err = installation_proxy_uninstall(client, [bundleId UTF8String], optionsPlist);
     } else {
         struct InstallationProxyCallbackContext context;
-        context.callback = callback;
-        
+        context.callbackId = callbackId;
+        context.context = self->context;
         err = installation_proxy_uninstall_with_callback(client, [bundleId UTF8String], optionsPlist, (void (*)(uint64_t, void *))installationProxyCallback, &context);
 
     }

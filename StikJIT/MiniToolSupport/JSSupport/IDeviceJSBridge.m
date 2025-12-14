@@ -78,12 +78,12 @@ const char** cstrArrFromNSArray(NSArray* arr, int* validCount) {
     int maxDataId;
 }
 
-- (instancetype)init {
+- (instancetype)initWithContext:(JSContext*)context {
     maxHandleId = 0;
     maxDataId = 0;
     handles = [[NSMutableDictionary alloc] init];
     dataPool = [[NSMutableDictionary alloc] init];
-
+    self->context = context;
     return self;
 }
 

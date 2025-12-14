@@ -23,7 +23,9 @@
 @interface IDeviceJSBridge : NSObject {
     NSMutableDictionary<NSNumber*, IDeviceHandle*>* handles;
     NSMutableDictionary<NSNumber*, NSData*>* dataPool;
+    JSContext* context;
 }
+- (instancetype)initWithContext:(JSContext*)context;
 - (void)didReceiveScriptMessage:(NSDictionary *)message resolve:(JSValue*)resolveFunc reject:(JSValue*)rejectFunc;
 - (void)cleanUp;
 - (NSString*)errFreeFromIdeviceFfiError:(IdeviceFfiError*)err;

@@ -16,7 +16,7 @@ final class MiniToolRuntime: NSObject, ObservableObject {
 
     private let messageHandlerName = "miniToolBridge"
     
-    private var ideviceJSBridge : IDeviceJSBridge? = IDeviceJSBridge()
+    private var ideviceJSBridge : IDeviceJSBridge? = nil
 
     init(tool: MiniToolBundle) {
         self.tool = tool
@@ -64,6 +64,7 @@ final class MiniToolRuntime: NSObject, ObservableObject {
 
     private func loadBackground() {
         context = JSContext()
+        ideviceJSBridge = IDeviceJSBridge(context: context)
         context?.exceptionHandler = { [weak self] _, exception in
             if let message = exception?.toString() {
                 self?.appendLog("Background exception: \(message)")

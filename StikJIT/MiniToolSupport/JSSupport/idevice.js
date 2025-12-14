@@ -259,6 +259,27 @@ async function afc_file_write(handle, data_handle) {
     });
 }
 
+// for installation_proxy_callback
+
+var handle_installation_proxy_callback_dict = {"max": 0}
+function handle_installation_proxy_js_callback(id, progress) {
+    let func = handle_installation_proxy_callback_dict[id];
+    if(func) {
+        func(progress)
+    }
+}
+
+function installation_proxy_js_callback_register(callback) {
+    let cur = handle_installation_proxy_callback_dict['max']
+    handle_installation_proxy_callback_dict['max']++
+    handle_installation_proxy_callback_dict[cur] = callback
+    return cur;
+}
+
+function installation_proxy_js_callback_unregister(id) {
+    delete handle_installation_proxy_callback_dict[id]
+}
+
 async function installation_proxy_connect() {
     return await __postIdeviceMessage({
         "command": "installation_proxy_connect"
@@ -283,33 +304,72 @@ async function installation_proxy_browse(client, options) {
 }
 
 async function installation_proxy_install(client, package_path, options, callback) {
-    return await __postIdeviceMessage({
-        "command": "installation_proxy_install",
-        "client": client,
-        "package_path": package_path,
-        "options": options,
-        "callback": callback
-    });
+    if(callback) {
+        let id = installation_proxy_js_callback_register(callback)
+        let ans = await __postIdeviceMessage({
+            "command": "installation_proxy_install",
+            "client": client,
+            "package_path": package_path,
+            "options": options,
+            "callback_id": id
+        });
+        installation_proxy_js_callback_unregister(id)
+        return ans;
+    } else {
+        return await __postIdeviceMessage({
+            "command": "installation_proxy_install",
+            "client": client,
+            "package_path": package_path,
+            "options": options,
+            "callback_id": -1
+        });
+    }
 }
 
 async function installation_proxy_upgrade(client, package_path, options, callback) {
-    return await __postIdeviceMessage({
-        "command": "installation_proxy_install",
-        "client": client,
-        "package_path": package_path,
-        "options": options,
-        "callback": callback
-    });
+    if(callback) {
+        let id = installation_proxy_js_callback_register(callback)
+        let ans = await __postIdeviceMessage({
+            "command": "installation_proxy_upgrade",
+            "client": client,
+            "package_path": package_path,
+            "options": options,
+            "callback_id": id
+        });
+        installation_proxy_js_callback_unregister(id)
+        return ans;
+    } else {
+        return await __postIdeviceMessage({
+            "command": "installation_proxy_install",
+            "client": client,
+            "package_path": package_path,
+            "options": options,
+            "callback_id": -1
+        });
+    }
 }
 
 async function installation_proxy_uninstall(client, bundle_id, options, callback) {
-    return await __postIdeviceMessage({
-        "command": "installation_proxy_install",
-        "client": client,
-        "bundle_id": bundle_id,
-        "options": options,
-        "callback": callback
-    });
+    if(callback) {
+        let id = installation_proxy_js_callback_register(callback)
+        let ans = await __postIdeviceMessage({
+            "command": "installation_proxy_uninstall",
+            "client": client,
+            "bundle_id": bundle_id,
+            "options": options,
+            "callback_id": id
+        });
+        installation_proxy_js_callback_unregister(id)
+        return ans;
+    } else {
+        return await __postIdeviceMessage({
+            "command": "installation_proxy_install",
+            "client": client,
+            "bundle_id": bundle_id,
+            "options": options,
+            "callback_id": -1
+        });
+    }
 }
 
 async function amfi_connect() {
