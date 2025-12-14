@@ -55,9 +55,11 @@ struct MainTabView: View {
             TabDescriptor(id: "console", title: "Console", systemImage: "terminal") { AnyView(ConsoleLogsView()) },
             TabDescriptor(id: "scripts", title: "Scripts", systemImage: "scroll") { AnyView(ScriptListView()) },
             TabDescriptor(id: "profiles", title: "Profiles", systemImage: "magazine.fill") { AnyView(ProfileView()) },
-            TabDescriptor(id: "deviceinfo", title: "Device Info", systemImage: "iphone.and.arrow.forward") { AnyView(DeviceInfoView()) },
-            TabDescriptor(id: "tools", title: "Mini Tools", systemImage: "shippingbox.fill") { AnyView(MiniToolListView()) },
+            TabDescriptor(id: "deviceinfo", title: "Device Info", systemImage: "iphone.and.arrow.forward") { AnyView(DeviceInfoView()) }
         ]
+        if FeatureFlags.isMiniToolsEnabled {
+            tabs.append(TabDescriptor(id: "tools", title: "Mini Tools", systemImage: "shippingbox.fill") { AnyView(MiniToolListView()) })
+        }
         if FeatureFlags.showBetaTabs {
             tabs.append(TabDescriptor(id: "processes", title: "Processes", systemImage: "rectangle.stack.person.crop") { AnyView(ProcessInspectorView()) })
             tabs.append(TabDescriptor(id: "devicelibrary", title: "Devices", systemImage: "list.bullet.rectangle") { AnyView(DeviceLibraryView()) })

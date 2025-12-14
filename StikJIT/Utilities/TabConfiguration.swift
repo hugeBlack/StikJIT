@@ -3,9 +3,12 @@ import Foundation
 enum TabConfiguration {
     static let storageKey = "enabledTabIdentifiers"
     static let maxSelectableTabs = 4
-    private static let coreIDs: [String] = ["home", "console", "scripts", "profiles", "deviceinfo", "tools"]
+    private static let coreIDs: [String] = ["home", "console", "scripts", "profiles", "deviceinfo"]
     static var allowedIDs: [String] {
         var ids = coreIDs
+        if FeatureFlags.isMiniToolsEnabled {
+            ids.append("tools")
+        }
         if FeatureFlags.showBetaTabs {
             ids.append("processes")
             ids.append("devicelibrary")
