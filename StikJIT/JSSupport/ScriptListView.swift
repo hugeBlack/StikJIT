@@ -323,6 +323,7 @@ struct ScriptListView: View {
             ("Amethyst", "Amethyst.js"),
             ("Geode", "Geode.js"),
             ("MeloNX", "MeloNX.js"),
+            ("manic", "manic.js"),
             ("UTM-Dolphin", "UTM-Dolphin.js")
         ]
 
