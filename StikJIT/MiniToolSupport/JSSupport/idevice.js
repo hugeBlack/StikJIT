@@ -288,7 +288,7 @@ async function installation_proxy_install(client, package_path, options, callbac
         "client": client,
         "package_path": package_path,
         "options": options,
-        "callback_id": -1
+        "callback": callback
     });
 }
 
@@ -298,7 +298,7 @@ async function installation_proxy_upgrade(client, package_path, options, callbac
         "client": client,
         "package_path": package_path,
         "options": options,
-        "callback_id": -1
+        "callback": callback
     });
 }
 

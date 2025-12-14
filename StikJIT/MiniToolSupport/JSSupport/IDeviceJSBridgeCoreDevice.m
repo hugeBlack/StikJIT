@@ -9,6 +9,13 @@
 @implementation IDeviceJSBridge (CoreDevice)
 
 - (void)core_device_proxy_connectWithBody:(NSDictionary *)body replyHandler:(nonnull void (^)(id _Nullable, NSString * _Nullable))replyHandler {
+    NSError* heartbeatErr = nil;
+    [JITEnableContext.shared ensureHeartbeatWithError:&heartbeatErr];
+    if(heartbeatErr) {
+        replyHandler(nil, heartbeatErr.localizedDescription);
+        return;
+    }
+    
     IdeviceProviderHandle* provider = [JITEnableContext.shared getTcpProviderHandle];
     
     CoreDeviceProxyHandle *core_device = NULL;

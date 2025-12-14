@@ -10,6 +10,13 @@
 @implementation IDeviceJSBridge (Misagent)
 
 - (void)misagent_connectWithBody:(NSDictionary *)body replyHandler:(nonnull void (^)(id _Nullable, NSString * _Nullable))replyHandler {
+    NSError* heartbeatErr = nil;
+    [JITEnableContext.shared ensureHeartbeatWithError:&heartbeatErr];
+    if(heartbeatErr) {
+        replyHandler(nil, heartbeatErr.localizedDescription);
+        return;
+    }
+    
     IdeviceProviderHandle* provider = [JITEnableContext.shared getTcpProviderHandle];
 
     MisagentClientHandle* client = NULL;

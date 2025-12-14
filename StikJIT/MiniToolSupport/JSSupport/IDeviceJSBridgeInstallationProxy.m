@@ -19,6 +19,13 @@ void installationProxyCallback(uint64_t progress, struct InstallationProxyCallba
 @implementation IDeviceJSBridge (InstallationProxy)
 
 - (void)installation_proxy_connectWithBody:(NSDictionary *)body replyHandler:(nonnull void (^)(id _Nullable, NSString * _Nullable))replyHandler {
+    NSError* heartbeatErr = nil;
+    [JITEnableContext.shared ensureHeartbeatWithError:&heartbeatErr];
+    if(heartbeatErr) {
+        replyHandler(nil, heartbeatErr.localizedDescription);
+        return;
+    }
+    
     IdeviceProviderHandle* provider = [JITEnableContext.shared getTcpProviderHandle];
     
     InstallationProxyClientHandle *client = NULL;
@@ -109,7 +116,9 @@ void installationProxyCallback(uint64_t progress, struct InstallationProxyCallba
         plist_from_memory((void*)[optionsNSData bytes], (uint32_t)[optionsNSData length], &optionsPlist, 0);
     }
     
-    JSValue* callback = body[@"callback"];
+//    JSValue* callback = body[@"callback"];
+    // TODO implement real callback
+    JSValue* callback = nil;
     IdeviceFfiError* err = 0;
     if(!callback) {
         err = installation_proxy_install(client, [packagePath UTF8String], optionsPlist);

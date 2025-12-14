@@ -19,7 +19,7 @@
 #include <os/lock.h>
 #import <pthread.h>
 
-JITEnableContext* sharedJITContext = nil;
+static JITEnableContext* sharedJITContext = nil;
 
 @implementation JITEnableContext {    
     int heartbeatToken;
@@ -31,9 +31,10 @@ JITEnableContext* sharedJITContext = nil;
 }
 
 + (instancetype)shared {
-    if (!sharedJITContext) {
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
         sharedJITContext = [[JITEnableContext alloc] init];
-    }
+    });
     return sharedJITContext;
 }
 
@@ -177,7 +178,7 @@ JITEnableContext* sharedJITContext = nil;
                        globalHeartbeatToken,Ccompletion
         );
     });
-    // allow 2 seconds for heartbeat, otherwise we declare timeout
+    // allow 5 seconds for heartbeat, otherwise we declare timeout
     intptr_t isTimeout = dispatch_semaphore_wait(semaphore, dispatch_time(DISPATCH_TIME_NOW, (uint64_t)(5 * NSEC_PER_SEC)));
     if(isTimeout) {
         Ccompletion(-1, "Heartbeat failed to complete in reasonable time.");

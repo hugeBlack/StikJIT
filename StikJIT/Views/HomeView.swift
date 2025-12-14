@@ -466,14 +466,22 @@ struct HomeView: View {
     
     @ViewBuilder
     private var connectionStatusBadge: some View {
-        if isConnectionCheckRunning {
-            statusBadge(icon: "clock.arrow.circlepath", text: "Checking…", color: .orange)
-        } else if allStatusIndicatorsGreen {
-            statusBadge(icon: "checkmark.circle.fill", text: "Ready", color: .green)
-        } else if connectionHasError {
-            statusBadge(icon: "exclamationmark.triangle.fill", text: "Needs attention", color: .yellow)
-        } else {
-            statusBadge(icon: "circle.lefthalf.filled", text: "Not ready", color: .yellow)
+        HStack {
+            Button {
+                refreshStatusTapped()
+            } label: {
+                iconOnlyStatusBadge(icon: "arrow.clockwise", text: "", color: .blue)
+            }.disabled(isConnectionCheckRunning)
+
+            if isConnectionCheckRunning {
+                statusBadge(icon: "clock.arrow.circlepath", text: "Checking…", color: .orange)
+            } else if allStatusIndicatorsGreen {
+                statusBadge(icon: "checkmark.circle.fill", text: "Ready", color: .green)
+            } else if connectionHasError {
+                statusBadge(icon: "exclamationmark.triangle.fill", text: "Needs attention", color: .yellow)
+            } else {
+                statusBadge(icon: "circle.lefthalf.filled", text: "Not ready", color: .yellow)
+            }
         }
     }
     
@@ -489,6 +497,19 @@ struct HomeView: View {
             .foregroundStyle(color)
     }
     
+    private func iconOnlyStatusBadge(icon: String, text: String, color: Color) -> some View {
+        Label(text, systemImage: icon)
+            .font(.footnote.weight(.semibold))
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(
+                Circle()
+                    .fill(color.opacity(0.15))
+            )
+            .foregroundStyle(color)
+            .labelStyle(.iconOnly)
+    }
+    
     private var connectionHasError: Bool {
         if case .failure = connectionCheckState { return true }
         if case .timeout = connectionCheckState { return true }
@@ -502,7 +523,7 @@ struct HomeView: View {
     }
     
     private var statusLightsRow: some View {
-        HStack(spacing: 12) {
+        HStack(alignment: .center) {
             ForEach(statusLights) { light in
                 if let action = light.action {
                     Button(action: action) {
@@ -514,7 +535,7 @@ struct HomeView: View {
                     StatusLightView(light: light)
                 }
             }
-        }
+        }.frame(maxWidth: .infinity)
     }
     
     private var statusLights: [StatusLightData] {
@@ -539,18 +560,6 @@ struct HomeView: View {
                 icon: "waveform.path.ecg",
                 status: heartbeatIndicatorStatus,
                 detail: heartbeatDetailText
-            ),
-            StatusLightData(
-                type: .refresh,
-                title: "Refresh",
-                icon: "arrow.clockwise",
-                status: refreshIndicatorStatus,
-                detail: "",
-                action: refreshStatusTapped,
-                isEnabled: !isConnectionCheckRunning,
-                indicatorIconName: "arrow.clockwise",
-                indicatorColor: .blue,
-                tintOverride: .blue
             )
         ]
     }
