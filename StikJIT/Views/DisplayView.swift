@@ -77,6 +77,7 @@ struct DisplayView: View {
     @State private var selectedAccentColor: Color = .blue
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.themeExpansionManager) private var themeExpansionOptional
+    @Environment(\.dismiss) private var dismiss
 
     @State private var justSaved = false
     @State private var showingCreateCustomTheme = false
@@ -171,6 +172,11 @@ struct DisplayView: View {
                 }
             }
             .navigationTitle("Display")
+            .toolbar {
+                ToolbarItem(placement: .primaryAction) {
+                    Button("Close") { dismiss() }
+                }
+            }
             .onAppear {
                 if !hasThemeExpansion, let manager = themeExpansion, manager.isCustomThemeIdentifier(appThemeRaw) {
                     appThemeRaw = AppTheme.system.rawValue

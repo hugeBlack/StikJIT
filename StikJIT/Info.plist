@@ -15,13 +15,17 @@
 			</array>
 		</dict>
 	</array>
-
-	<key>ITSAppUsesNonExemptEncryption</key>
-	<false/>
-
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_stikdebug._tcp</string>
+		<string>_stikdebug._udp</string>
+	</array>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>audio</string>
+	</array>
 	<key>UIFileSharingEnabled</key>
 	<true/>
-
 	<key>UTExportedTypeDeclarations</key>
 	<array>
 		<dict>
@@ -43,15 +47,6 @@
 				</array>
 			</dict>
 		</dict>
-	</array>
-
-	<key>NSLocalNetworkUsageDescription</key>
-	<string>StikDebug needs access to devices on your local network so it can connect to the targets you add to the Device Library.</string>
-
-	<key>NSBonjourServices</key>
-	<array>
-		<string>_stikdebug._tcp</string>
-		<string>_stikdebug._udp</string>
 	</array>
 </dict>
 </plist>
