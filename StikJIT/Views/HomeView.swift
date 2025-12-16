@@ -1555,13 +1555,19 @@ struct HomeView: View {
         
         private func getJsCallback(_ script: Data, name: String? = nil) -> DebugAppCallback {
             return { pid, debugProxyHandle, remoteServerHandle, semaphore in
-                jsModel = RunJSViewModel(pid: Int(pid),
-                                         debugProxy: debugProxyHandle,
-                                         remoteServer: remoteServerHandle,
-                                         semaphore: semaphore)
-                scriptViewShow = true
+                let model = RunJSViewModel(pid: Int(pid),
+                                           debugProxy: debugProxyHandle,
+                                           remoteServer: remoteServerHandle,
+                                           semaphore: semaphore)
+                
+                DispatchQueue.main.async {
+                    jsModel = model
+                    scriptViewShow = true
+                    pipRequired = true
+                }
+                
                 DispatchQueue.global(qos: .background).async {
-                    do { try jsModel?.runScript(data: script, name: name) }
+                    do { try model.runScript(data: script, name: name) }
                     catch { showAlert(title: "Error Occurred While Executing Script.".localized, message: error.localizedDescription, showOk: true) }
                 }
             }
@@ -1572,6 +1578,13 @@ struct HomeView: View {
             LogManager.shared.addInfoLog("Starting Debug for \(bundleID ?? String(pid ?? 0))")
             
             DispatchQueue.global(qos: .background).async {
+                let finishProcessing = {
+                    DispatchQueue.main.async {
+                        isProcessing = false
+                        pipRequired = false
+                    }
+                }
+                
                 var scriptData = scriptData
                 var scriptName = scriptName
                 if scriptData == nil,
@@ -1585,9 +1598,9 @@ struct HomeView: View {
                 if ProcessInfo.processInfo.hasTXM, let sd = scriptData {
                     callback = getJsCallback(sd, name: scriptName ?? bundleID ?? "Script")
                     if triggeredByURLScheme { usleep(500000) }
-                    pipRequired = true
+                    DispatchQueue.main.async { pipRequired = true }
                 } else {
-                    pipRequired = false
+                    DispatchQueue.main.async { pipRequired = false }
                 }
                 
                 let logger: LogFunc = { message in if let message { LogManager.shared.addInfoLog(message) } }
@@ -1609,7 +1622,7 @@ struct HomeView: View {
                         LogManager.shared.addInfoLog("Debug process completed for \(bundleID ?? String(pid ?? 0))")
                     }
                 }
-                isProcessing = false
+                finishProcessing()
             }
         }
         
