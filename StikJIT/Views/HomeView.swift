@@ -1596,9 +1596,8 @@ struct HomeView: View {
                     }
                 }
                 isProcessing = false
-                pipRequired = false
+            }
         }
-    }
         
         private func launchSystemApp(item: SystemPinnedItem) {
             guard !launchingSystemApps.contains(item.bundleID) else { return }
@@ -2199,11 +2198,8 @@ struct HomeView: View {
                 .contentShape(Rectangle())
             }
         }
-        
+
     }
-
-// MARK: - TXM detection
-
 public extension ProcessInfo {
     var hasTXM: Bool {
         if isTXMOverridden {

@@ -28,8 +28,7 @@ struct InstalledAppsListView: View {
     }
 
     @AppStorage("loadAppIconsOnJIT") private var loadAppIconsOnJIT = true
-    @AppStorage("performanceMode") private var performanceMode = false
-    @State private var showPerformanceToast = false
+    private let performanceMode = true
     @State private var launchingBundles: Set<String> = []
     @State private var launchFeedback: LaunchFeedback? = nil
     @State private var debuggableSearchText: String = ""
@@ -160,40 +159,9 @@ private enum AppListTab: Int, CaseIterable, Identifiable {
                 ThemedBackground(style: backgroundStyle)
                     .ignoresSafeArea()
 
-                if viewModel.isLoading {
-                    ProgressView("Loading Apps…".localized)
-                        .padding(.horizontal, 24)
-                        .padding(.vertical, 20)
-                        .background(
-                            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                                .fill(.ultraThinMaterial)
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 20, style: .continuous)
-                                        .stroke(.white.opacity(0.15), lineWidth: 1)
-                                )
-                        )
-                        .shadow(color: .black.opacity(0.12), radius: 10, x: 0, y: 4)
-                        .transition(.opacity.combined(with: .scale))
-                } else {
-                    tabbedContent
-                        .transition(.opacity)
-                        .transaction { t in t.disablesAnimations = true }
-                }
-
-                if showPerformanceToast {
-                    VStack {
-                        Spacer()
-                        Text(performanceMode ? "Performance Mode On" : "Performance Mode Off")
-                            .font(.subheadline.weight(.semibold))
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 8)
-                            .background(.ultraThinMaterial, in: Capsule())
-                            .shadow(radius: 4)
-                            .transition(.move(edge: .bottom).combined(with: .opacity))
-                            .padding(.bottom, 40)
-                    }
-                    .animation(.spring(response: 0.3, dampingFraction: 0.8), value: showPerformanceToast)
-                }
+                tabbedContent
+                    .transition(.opacity)
+                    .transaction { t in t.disablesAnimations = true }
 
                 if let feedback = launchFeedback {
                     VStack {
@@ -220,30 +188,12 @@ private enum AppListTab: Int, CaseIterable, Identifiable {
             }
             .navigationTitle("Installed Apps".localized)
             .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
-                    Button {
-                        performanceMode.toggle()
-                        Haptics.selection()
-                        showPerformanceToast = true
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-                            withAnimation {
-                                showPerformanceToast = false
-                            }
-                        }
-                    } label: {
-                        Image(systemName: performanceMode ? "bolt.fill" : "bolt.slash.fill")
-                            .imageScale(.large)
-                            .foregroundStyle(performanceMode ? .yellow : .secondary)
-                            .accessibilityLabel("Toggle Performance Mode")
-                            .accessibilityValue(performanceMode ? "On" : "Off")
-                    }
-                }
-
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button("Done") { dismiss() }
                         .fontWeight(.semibold)
                 }
             }
+            .ignoresSafeArea(edges: .bottom)
         }
         .preferredColorScheme(preferredScheme)
         .onAppear {
@@ -304,74 +254,12 @@ private enum AppListTab: Int, CaseIterable, Identifiable {
             }
         }
         .padding(24)
-        .glassCard(cornerRadius: 24, material: .thinMaterial, strokeOpacity: 0.12)
+        .glassCard(cornerRadius: 24, strokeOpacity: 0.12)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(tab == .debuggable ? "No debuggable apps available" : "No launchable apps available")
     }
 
     // MARK: Apps List
-
-    private func debuggableSections(
-        apps: [(key: String, value: String)],
-        favorites: [String],
-        recents: [String]
-    ) -> some View {
-        VStack(spacing: 18) {
-            if !favorites.isEmpty {
-                glassSection(
-                    title: String(format: "Favorites (%d/4)".localized, favorites.count)
-                ) {
-                    LazyVStack(spacing: 12) {
-                        ForEach(favorites, id: \.self) { bundleID in
-                            AppButton(
-                                bundleID: bundleID,
-                                appName: viewModel.debuggableApps[bundleID] ?? bundleID,
-                                recentApps: $recentApps,
-                                favoriteApps: $favoriteApps,
-                                onSelectApp: onSelectApp,
-                                sharedDefaults: sharedDefaults,
-                                performanceMode: performanceMode
-                            )
-                        }
-                    }
-                }
-            }
-
-            if !recents.isEmpty {
-                glassSection(title: "Recents".localized) {
-                    LazyVStack(spacing: 12) {
-                        ForEach(recents, id: \.self) { bundleID in
-                            AppButton(
-                                bundleID: bundleID,
-                                appName: viewModel.debuggableApps[bundleID] ?? bundleID,
-                                recentApps: $recentApps,
-                                favoriteApps: $favoriteApps,
-                                onSelectApp: onSelectApp,
-                                sharedDefaults: sharedDefaults,
-                                performanceMode: performanceMode
-                            )
-                        }
-                    }
-                }
-            }
-
-            glassSection(title: "All Applications".localized) {
-                LazyVStack(spacing: 12) {
-                    ForEach(apps, id: \.key) { bundleID, appName in
-                        AppButton(
-                            bundleID: bundleID,
-                            appName: appName,
-                            recentApps: $recentApps,
-                            favoriteApps: $favoriteApps,
-                            onSelectApp: onSelectApp,
-                            sharedDefaults: sharedDefaults,
-                            performanceMode: performanceMode
-                        )
-                    }
-                }
-            }
-        }
-    }
 
     private func prefetchPriorityIcons(limit: Int = 32) {
         guard loadAppIconsOnJIT else { return }
@@ -401,49 +289,6 @@ private enum AppListTab: Int, CaseIterable, Identifiable {
         AppIconRepository.prefetch(bundleIDs: toPrefetch)
     }
 
-    private func launchSections(apps: [(key: String, value: String)]) -> some View {
-        glassSection(title: "Launchable Apps".localized) {
-            LazyVStack(spacing: 12) {
-                ForEach(apps, id: \.key) { bundleID, appName in
-                    let isPinned = pinnedSystemApps.contains(bundleID)
-                    LaunchAppRow(
-                        bundleID: bundleID,
-                        appName: appName,
-                        isLaunching: launchingBundles.contains(bundleID),
-                        performanceMode: performanceMode
-                    ) {
-                        startLaunching(bundleID: bundleID)
-                    }
-                    .overlay(alignment: .topTrailing) {
-                        if isPinned {
-                            Image(systemName: "star.fill")
-                                .font(.system(size: 12, weight: .semibold))
-                                .foregroundStyle(.yellow)
-                                .padding(6)
-                        }
-                    }
-                    .contextMenu {
-                        Button((isPinned ? "Remove from Home" : "Add to Home").localized, systemImage: isPinned ? "star.slash" : "star") {
-                            toggleSystemPin(bundleID: bundleID, appName: appName)
-                        }
-                        Button("Copy Bundle ID".localized, systemImage: "doc.on.doc") {
-                            UIPasteboard.general.string = bundleID
-                            Haptics.light()
-                        }
-                    }
-                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                        Button {
-                            toggleSystemPin(bundleID: bundleID, appName: appName)
-                        } label: {
-                            Label((isPinned ? "Unpin" : "Pin").localized, systemImage: "star")
-                        }
-                        .tint(.yellow)
-                    }
-                }
-            }
-        }
-    }
-
     @ViewBuilder
     private var tabbedContent: some View {
         VStack(spacing: 14) {
@@ -468,59 +313,143 @@ private enum AppListTab: Int, CaseIterable, Identifiable {
     private func tabContent(for tab: AppListTab) -> some View {
         switch tab {
         case .debuggable:
-            if viewModel.debuggableApps.isEmpty {
-                VStack {
-                    Spacer(minLength: 0)
-                    emptyState(for: .debuggable)
-                    Spacer(minLength: 0)
+            ScrollView {
+                LazyVStack(spacing: 18, pinnedViews: []) {
+                    sectionCard {
+                        debuggableSearchBar
+                    }
+
+                    if let error = viewModel.lastError {
+                        sectionCard {
+                            errorBanner(error)
+                        }
+                    }
+
+                    if filteredDebuggableApps.isEmpty {
+                        sectionCard {
+                            debuggableSearchEmptyState
+                        }
+                    } else {
+                        if !filteredFavoriteBundles.isEmpty {
+                            sectionCard(title: String(format: "Favorites (%d/4)".localized, filteredFavoriteBundles.count)) {
+                                LazyVStack(spacing: 12) {
+                                    ForEach(filteredFavoriteBundles, id: \.self) { bundleID in
+                                        AppButton(
+                                            bundleID: bundleID,
+                                            appName: viewModel.debuggableApps[bundleID] ?? fallbackReadableName(from: bundleID),
+                                            recentApps: $recentApps,
+                                            favoriteApps: $favoriteApps,
+                                            onSelectApp: onSelectApp,
+                                            sharedDefaults: sharedDefaults,
+                                            performanceMode: performanceMode
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        if !filteredRecentBundles.isEmpty {
+                            sectionCard(title: "Recents".localized) {
+                                LazyVStack(spacing: 12) {
+                                    ForEach(filteredRecentBundles, id: \.self) { bundleID in
+                                        AppButton(
+                                            bundleID: bundleID,
+                                            appName: viewModel.debuggableApps[bundleID] ?? fallbackReadableName(from: bundleID),
+                                            recentApps: $recentApps,
+                                            favoriteApps: $favoriteApps,
+                                            onSelectApp: onSelectApp,
+                                            sharedDefaults: sharedDefaults,
+                                            performanceMode: performanceMode
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        sectionCard(title: "All Applications".localized) {
+                            LazyVStack(spacing: 12) {
+                                ForEach(filteredDebuggableApps, id: \.key) { bundleID, appName in
+                                    AppButton(
+                                        bundleID: bundleID,
+                                        appName: appName,
+                                        recentApps: $recentApps,
+                                        favoriteApps: $favoriteApps,
+                                        onSelectApp: onSelectApp,
+                                        sharedDefaults: sharedDefaults,
+                                        performanceMode: performanceMode
+                                    )
+                                }
+                            }
+                        }
+                    }
                 }
                 .padding(.horizontal, 20)
                 .padding(.vertical, 24)
-                .transition(.opacity.combined(with: .scale))
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                ScrollView {
-                    VStack(spacing: 18) {
-                        debuggableSearchBar
-
-                        if let error = viewModel.lastError {
-                            errorBanner(error)
-                        }
-
-                        if filteredDebuggableApps.isEmpty {
-                            debuggableSearchEmptyState
-                                .transition(.opacity.combined(with: .scale))
-                        } else {
-                            debuggableSections(
-                                apps: filteredDebuggableApps,
-                                favorites: filteredFavoriteBundles,
-                                recents: filteredRecentBundles
-                            )
-                        }
-                    }
-                    .padding(.horizontal, 20)
-                    .padding(.vertical, 24)
-                }
             }
         case .launch:
             ScrollView {
-                VStack(spacing: 18) {
-                    launchSearchBar
+                LazyVStack(spacing: 18, pinnedViews: []) {
+                    sectionCard {
+                        launchSearchBar
+                    }
 
                     if let error = viewModel.lastError {
-                        errorBanner(error)
+                        sectionCard {
+                            errorBanner(error)
+                        }
                     }
 
                     if filteredLaunchApps.isEmpty {
-                        if launchSearchIsActive {
-                            launchSearchEmptyState
-                                .transition(.opacity.combined(with: .scale))
-                        } else {
-                            emptyState(for: .launch)
-                                .transition(.opacity.combined(with: .scale))
+                        sectionCard {
+                            Group {
+                                if launchSearchIsActive {
+                                    launchSearchEmptyState
+                                } else {
+                                    emptyState(for: .launch)
+                                }
+                            }
                         }
                     } else {
-                        launchSections(apps: filteredLaunchApps)
+                        sectionCard(title: "Launchable Apps".localized) {
+                            LazyVStack(spacing: 12) {
+                                ForEach(filteredLaunchApps, id: \.key) { bundleID, appName in
+                                    let isPinned = pinnedSystemApps.contains(bundleID)
+                                    LaunchAppRow(
+                                        bundleID: bundleID,
+                                        appName: appName,
+                                        isLaunching: launchingBundles.contains(bundleID),
+                                        performanceMode: performanceMode
+                                    ) {
+                                        startLaunching(bundleID: bundleID)
+                                    }
+                                    .overlay(alignment: .topTrailing) {
+                                        if isPinned {
+                                            Image(systemName: "star.fill")
+                                                .font(.system(size: 12, weight: .semibold))
+                                                .foregroundStyle(.yellow)
+                                                .padding(6)
+                                        }
+                                    }
+                                    .contextMenu {
+                                        Button((isPinned ? "Remove from Home" : "Add to Home").localized, systemImage: isPinned ? "star.slash" : "star") {
+                                            toggleSystemPin(bundleID: bundleID, appName: appName)
+                                        }
+                                        Button("Copy Bundle ID".localized, systemImage: "doc.on.doc") {
+                                            UIPasteboard.general.string = bundleID
+                                            Haptics.light()
+                                        }
+                                    }
+                                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                                        Button {
+                                            toggleSystemPin(bundleID: bundleID, appName: appName)
+                                        } label: {
+                                            Label((isPinned ? "Unpin" : "Pin").localized, systemImage: "star")
+                                        }
+                                        .tint(.yellow)
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
                 .padding(.horizontal, 20)
@@ -553,10 +482,10 @@ private enum AppListTab: Int, CaseIterable, Identifiable {
         .padding(.vertical, 10)
         .background(
             RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(.ultraThinMaterial)
+                .fill(Color(UIColor.secondarySystemBackground).opacity(0.9))
                 .overlay(
                     RoundedRectangle(cornerRadius: 16, style: .continuous)
-                        .stroke(.white.opacity(0.08), lineWidth: 1)
+                        .stroke(Color.white.opacity(0.08), lineWidth: 1)
                 )
         )
     }
@@ -575,7 +504,7 @@ private enum AppListTab: Int, CaseIterable, Identifiable {
                 .foregroundStyle(.secondary)
         }
         .padding(24)
-        .glassCard(cornerRadius: 20, material: .thinMaterial, strokeOpacity: 0.12)
+        .glassCard(cornerRadius: 20, strokeOpacity: 0.12)
     }
 
     private var launchSearchBar: some View {
@@ -602,10 +531,10 @@ private enum AppListTab: Int, CaseIterable, Identifiable {
         .padding(.vertical, 10)
         .background(
             RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(.ultraThinMaterial)
+                .fill(Color(UIColor.secondarySystemBackground).opacity(0.9))
                 .overlay(
                     RoundedRectangle(cornerRadius: 16, style: .continuous)
-                        .stroke(.white.opacity(0.08), lineWidth: 1)
+                        .stroke(Color.white.opacity(0.08), lineWidth: 1)
                 )
         )
     }
@@ -624,7 +553,7 @@ private enum AppListTab: Int, CaseIterable, Identifiable {
                 .foregroundStyle(.secondary)
         }
         .padding(24)
-        .glassCard(cornerRadius: 20, material: .thinMaterial, strokeOpacity: 0.12)
+        .glassCard(cornerRadius: 20, strokeOpacity: 0.12)
     }
 
     private func errorBanner(_ message: String) -> some View {
@@ -633,32 +562,14 @@ private enum AppListTab: Int, CaseIterable, Identifiable {
             .foregroundStyle(.orange)
             .padding(12)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .fill(.ultraThinMaterial)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 16, style: .continuous)
-                            .stroke(.white.opacity(0.12), lineWidth: 1)
-                    )
-            )
-    }
-
-    // MARK: Section Wrapper
-
-    private func glassSection<Content: View>(
-        title: String,
-        @ViewBuilder content: () -> Content
-    ) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text(title)
-                .font(.headline)
-                .foregroundStyle(.secondary)
-                .accessibilityAddTraits(.isHeader)
-
-            content()
-        }
-        .padding(20)
-        .glassCard(material: .thinMaterial, strokeOpacity: 0.12)
+        .background(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(Color(UIColor.secondarySystemBackground).opacity(0.9))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .stroke(Color.white.opacity(0.12), lineWidth: 1)
+                )
+        )
     }
 
     // MARK: Persistence gate (avoid redundant writes + reloads)
@@ -1452,29 +1363,45 @@ private struct BackgroundGradient: View {
 
 private struct GlassCard: ViewModifier {
     var cornerRadius: CGFloat = 20
-    var material: Material = .ultraThinMaterial
     var strokeOpacity: Double = 0.15
     func body(content: Content) -> some View {
         content
             .background(
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .fill(material)
+                    .fill(Color(UIColor.secondarySystemBackground).opacity(0.95))
                     .overlay(
                         RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                            .stroke(.white.opacity(strokeOpacity), lineWidth: 1)
+                            .stroke(Color.white.opacity(strokeOpacity), lineWidth: 1)
                     )
             )
-            .shadow(color: .black.opacity(0.15), radius: 12, x: 0, y: 4)
+            .shadow(color: .black.opacity(0.08), radius: 8, x: 0, y: 3)
     }
 }
 
 private extension View {
     func glassCard(
         cornerRadius: CGFloat = 20,
-        material: Material = .ultraThinMaterial,
         strokeOpacity: Double = 0.15
     ) -> some View {
-        modifier(GlassCard(cornerRadius: cornerRadius, material: material, strokeOpacity: strokeOpacity))
+        modifier(GlassCard(cornerRadius: cornerRadius, strokeOpacity: strokeOpacity))
+    }
+
+    // Lightweight section container to keep layout predictable and fast.
+    func sectionCard(
+        title: String? = nil,
+        @ViewBuilder content: () -> some View
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if let title {
+                Text(title)
+                    .font(.headline)
+                    .foregroundStyle(.secondary)
+                    .accessibilityAddTraits(.isHeader)
+            }
+            content()
+        }
+        .padding(16)
+        .glassCard(strokeOpacity: 0.12)
     }
 }
 
@@ -1577,8 +1504,15 @@ class InstalledAppsViewModel: ObservableObject {
     @Published var lastError: String? = nil
 
     private let workQueue = DispatchQueue(label: "com.stik.installedApps", qos: .userInitiated)
+    private let cache = UserDefaults(suiteName: "group.com.stik.sj") ?? .standard
+    private let cacheKeyDebuggable = "cachedDebuggableApps"
+    private let cacheKeyNonDebuggable = "cachedNonDebuggableApps"
+    private let cacheKeySystem = "cachedSystemApps"
 
-    init() { refreshAppLists() }
+    init() {
+        loadCachedApps()
+        refreshAppLists()
+    }
 
     func refreshAppLists() {
         isLoading = true
@@ -1612,18 +1546,44 @@ class InstalledAppsViewModel: ObservableObject {
                     self.nonDebuggableApps = nonDebuggable
                     self.systemApps = system
                     self.isLoading = false
+                    self.cacheApps(debuggable: debuggable, nonDebuggable: nonDebuggable, system: system)
                 }
             } catch {
                 DispatchQueue.main.async {
-                    self.debuggableApps = [:]
-                    self.nonDebuggableApps = [:]
-                    self.systemApps = [:]
                     self.isLoading = false
                     self.lastError = error.localizedDescription
                     print("Failed to load apps: \(error)")
                 }
             }
         }
+    }
+
+    private func loadCachedApps() {
+        func decode(_ key: String) -> [String: String] {
+            guard let data = cache.data(forKey: key),
+                  let decoded = try? JSONDecoder().decode([String: String].self, from: data) else { return [:] }
+            return decoded
+        }
+
+        let cachedDebuggable = decode(cacheKeyDebuggable)
+        let cachedNonDebuggable = decode(cacheKeyNonDebuggable)
+        let cachedSystem = decode(cacheKeySystem)
+
+        if !cachedDebuggable.isEmpty || !cachedNonDebuggable.isEmpty || !cachedSystem.isEmpty {
+            debuggableApps = cachedDebuggable
+            nonDebuggableApps = cachedNonDebuggable
+            systemApps = cachedSystem
+        }
+    }
+
+    private func cacheApps(debuggable: [String: String], nonDebuggable: [String: String], system: [String: String]) {
+        func encode(_ value: [String: String]) -> Data? {
+            try? JSONEncoder().encode(value)
+        }
+
+        cache.set(encode(debuggable), forKey: cacheKeyDebuggable)
+        cache.set(encode(nonDebuggable), forKey: cacheKeyNonDebuggable)
+        cache.set(encode(system), forKey: cacheKeySystem)
     }
 
     func launchWithoutDebug(bundleID: String, completion: @escaping (Bool) -> Void) {
