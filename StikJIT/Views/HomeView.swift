@@ -127,6 +127,24 @@ struct HomeView: View {
     
     private let pairingFileURL = URL.documentsDirectory.appendingPathComponent("pairingFile.plist")
     
+    @ViewBuilder
+    private var homeContent: some View {
+        VStack(spacing: 20) {
+            welcomeCard
+            setupCard
+            connectCard
+            // if pairingFileExists {
+            //        quickConnectCard
+            //  }
+            if !pinnedLaunchItems.isEmpty {
+                launchShortcutsCard
+            }
+            tipsCard
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 30)
+    }
+    
     var body: some View {
         NavigationStack {
             ZStack {
@@ -134,20 +152,7 @@ struct HomeView: View {
                     .ignoresSafeArea()
                 
                 ScrollView {
-                    VStack(spacing: 20) {
-                        welcomeCard
-                        setupCard
-                        connectCard
-                        // if pairingFileExists {
-                        //        quickConnectCard
-                        //  }
-                        if !pinnedLaunchItems.isEmpty {
-                            launchShortcutsCard
-                        }
-                        tipsCard
-                    }
-                    .padding(.horizontal, 20)
-                    .padding(.vertical, 30)
+                    homeContent
                 }
                 .scrollIndicators(.hidden)
                 
@@ -1206,15 +1211,65 @@ struct HomeView: View {
         private func homeCard<Content: View>(@ViewBuilder content: () -> Content) -> some View {
             content()
                 .padding(20)
-                .background(
-                    RoundedRectangle(cornerRadius: 20, style: .continuous)
-                        .fill(.ultraThinMaterial)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                                .strokeBorder(Color.white.opacity(0.15), lineWidth: 1)
-                        )
-                )
-                .shadow(color: .black.opacity(0.15), radius: 12, x: 0, y: 4)
+                .background(UIKitCardBackground())
+        }
+
+        // UIKit blur/shadow chrome keeps heavy effects out of SwiftUI while leaving layout in SwiftUI so the content still renders.
+        private struct UIKitCardBackground: UIViewRepresentable {
+            func makeUIView(context: Context) -> CardChromeView {
+                CardChromeView()
+            }
+
+            func updateUIView(_ uiView: CardChromeView, context: Context) {
+                uiView.setNeedsLayout()
+            }
+        }
+
+        private final class CardChromeView: UIView {
+            private let blurView = UIVisualEffectView(effect: UIBlurEffect(style: .systemUltraThinMaterial))
+            private let strokeLayer = CAShapeLayer()
+
+            override init(frame: CGRect) {
+                super.init(frame: frame)
+                backgroundColor = .clear
+                isUserInteractionEnabled = false
+
+                layer.cornerRadius = 20
+                layer.cornerCurve = .continuous
+                layer.masksToBounds = false
+                layer.shadowColor = UIColor.black.withAlphaComponent(0.15).cgColor
+                layer.shadowOpacity = 1
+                layer.shadowRadius = 12
+                layer.shadowOffset = CGSize(width: 0, height: 4)
+
+                blurView.translatesAutoresizingMaskIntoConstraints = false
+                blurView.clipsToBounds = true
+                blurView.layer.cornerRadius = 20
+                blurView.layer.cornerCurve = .continuous
+                addSubview(blurView)
+
+                NSLayoutConstraint.activate([
+                    blurView.leadingAnchor.constraint(equalTo: leadingAnchor),
+                    blurView.trailingAnchor.constraint(equalTo: trailingAnchor),
+                    blurView.topAnchor.constraint(equalTo: topAnchor),
+                    blurView.bottomAnchor.constraint(equalTo: bottomAnchor)
+                ])
+
+                strokeLayer.strokeColor = UIColor.white.withAlphaComponent(0.15).cgColor
+                strokeLayer.fillColor = UIColor.clear.cgColor
+                layer.addSublayer(strokeLayer)
+            }
+
+            required init?(coder: NSCoder) {
+                nil
+            }
+
+            override func layoutSubviews() {
+                super.layoutSubviews()
+                strokeLayer.frame = bounds
+                strokeLayer.path = UIBezierPath(roundedRect: bounds, cornerRadius: 20).cgPath
+                layer.shadowPath = strokeLayer.path
+            }
         }
         
         private func compactControlButton(icon: String, title: String, showSpinner: Bool = false) -> some View {
