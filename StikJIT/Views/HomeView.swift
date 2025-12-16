@@ -214,7 +214,7 @@ struct HomeView: View {
             refreshBackground()
             checkPairingFileExists()
             heartbeatOK = pubHeartBeat
-            if !mounting.coolisMounted {
+            if mounting.mountingThread == nil && !mounting.coolisMounted {
                 MountingProgress.shared.checkforMounted()
             }
         }

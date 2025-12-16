@@ -812,9 +812,12 @@ func startHeartbeatInBackground(requireVPNConnection: Bool? = nil, showErrorUI: 
             print("Heartbeat started successfully")
             pubHeartBeat = true
             
-            if FileManager.default.fileExists(atPath: URL.documentsDirectory.appendingPathComponent("DDI/Image.dmg.trustcache").path) {
-                
-//                MountingProgress.shared.pubMount()
+            DispatchQueue.main.async {
+                let trustcachePath = URL.documentsDirectory.appendingPathComponent("DDI/Image.dmg.trustcache").path
+                guard FileManager.default.fileExists(atPath: trustcachePath),
+                      !MountingProgress.shared.coolisMounted,
+                      MountingProgress.shared.mountingThread == nil else { return }
+                MountingProgress.shared.pubMount()
             }
         } catch {
             let err2 = error as NSError
