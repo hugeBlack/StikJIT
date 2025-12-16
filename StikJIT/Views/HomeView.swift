@@ -76,6 +76,7 @@ struct HomeView: View {
     @State private var isSchedulingInitialSetup = false
     @AppStorage("cachedAppNamesData") private var cachedAppNamesData: Data?
     @AppStorage("autoStartVPN") private var autoStartVPN = true
+    @State private var lastDDIIndicatorStatus: StartupIndicatorStatus = .idle
     
     @AppStorage("appTheme") private var appThemeRaw: String = AppTheme.system.rawValue
     @Environment(\.themeExpansionManager) private var themeExpansion
@@ -195,6 +196,7 @@ struct HomeView: View {
                 hasAutoStartedConnectionCheck = true
                 runConnectionDiagnostics(autoStart: true)
             }
+            lastDDIIndicatorStatus = ddiIndicatorStatus
             NotificationCenter.default.addObserver(
                 forName: NSNotification.Name("ShowPairingFilePicker"),
                 object: nil,
@@ -212,6 +214,9 @@ struct HomeView: View {
             refreshBackground()
             checkPairingFileExists()
             heartbeatOK = pubHeartBeat
+            if !mounting.coolisMounted {
+                MountingProgress.shared.checkforMounted()
+            }
         }
         .onChange(of: pairingFileExists) { _, newValue in
             if newValue {
@@ -232,6 +237,9 @@ struct HomeView: View {
         .onChange(of: favoriteApps) { _, _ in
             loadAppListIfNeeded()
             syncFavoriteAppNamesWithCache()
+        }
+        .onChange(of: ddiIndicatorStatus) { _, newStatus in
+            handleDDIIndicatorChange(newStatus)
         }
         .onChange(of: recentApps) { _, _ in
             loadAppListIfNeeded()
@@ -269,6 +277,7 @@ struct HomeView: View {
                                     isImportingFile = false
                                     pairingFileIsValid = true
                                     withAnimation { showPairingFileMessage = true }
+                                    MountingProgress.shared.checkforMounted()
                                     DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
                                         withAnimation { showPairingFileMessage = false }
                                     }
@@ -649,6 +658,12 @@ struct HomeView: View {
         cellularMonitor?.cancel()
         cellularMonitor = nil
         isCellularActive = false
+    }
+    
+    private func handleDDIIndicatorChange(_ newStatus: StartupIndicatorStatus) {
+        defer { lastDDIIndicatorStatus = newStatus }
+        guard lastDDIIndicatorStatus == .success, newStatus == .warning else { return }
+        startHeartbeatInBackground(showErrorUI: false)
     }
     
     private var pairingStatusDescription: String {
@@ -1178,8 +1193,7 @@ struct HomeView: View {
                     refreshBackground()
                     checkPairingFileExists()
                     loadAppListIfNeeded()
-                    
-                    if tunnel.tunnelStatus == .connected {
+                    if tunnel.tunnelStatus == .connected || !requiresLoopbackVPN {
                         MountingProgress.shared.checkforMounted()
                     }
                 }

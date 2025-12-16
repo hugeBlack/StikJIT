@@ -233,7 +233,7 @@ class TunnelManager: ObservableObject {
             }
             VPNLogger.shared.log("VPN status updated: \(self.tunnelStatus.rawValue)")
             if connectionStatus == .connected && heartbeatStartPending {
-                startHeartbeatInBackground()
+                startHeartbeatInBackground(showErrorUI: heartbeatPendingShowUI)
             }
         }
     }
@@ -502,6 +502,7 @@ class DNSChecker: ObservableObject {
 var pubHeartBeat = false
 private var heartbeatStartPending = false
 private var heartbeatStartInProgress = false
+private var heartbeatPendingShowUI = true
 
 @main
 struct HeartbeatApp: App {
@@ -516,6 +517,7 @@ struct HeartbeatApp: App {
     @StateObject private var mount = MountingProgress.shared
     @StateObject private var themeExpansionManager = ThemeExpansionManager()
     @Environment(\.scenePhase) private var scenePhase   // Observe scene lifecycle
+    @State private var shouldAttemptHeartbeatRestart = false
     
     init() {
         registerAdvancedOptionsDefault()
@@ -562,6 +564,20 @@ struct HeartbeatApp: App {
         let manager = TunnelManager.shared
         if manager.tunnelStatus == .disconnected || manager.tunnelStatus == .error {
             manager.startVPN()
+        }
+    }
+    
+    private func handleScenePhaseChange(_ newPhase: ScenePhase) {
+        switch newPhase {
+        case .background:
+            shouldAttemptHeartbeatRestart = true
+        case .active:
+            if shouldAttemptHeartbeatRestart {
+                shouldAttemptHeartbeatRestart = false
+                startHeartbeatInBackground(showErrorUI: false)
+            }
+        default:
+            break
         }
     }
     
@@ -628,6 +644,9 @@ struct HeartbeatApp: App {
             .onChange(of: customAccentColorHex) { newHex in
                 HeartbeatApp.updateUIKitTint(customHex: newHex,
                                              hasAccess: themeExpansionManager.hasThemeExpansion)
+            }
+            .onChange(of: scenePhase) { newPhase in
+                handleScenePhaseChange(newPhase)
             }
             .sheet(isPresented: $showWelcomeSheet) {
                 WelcomeSheetView {
@@ -753,12 +772,13 @@ func isPairing() -> Bool {
     return true
 }
 
-func startHeartbeatInBackground(requireVPNConnection: Bool? = nil) {
+func startHeartbeatInBackground(requireVPNConnection: Bool? = nil, showErrorUI: Bool = true) {
     assert(Thread.isMainThread, "startHeartbeatInBackground must be called on the main thread")
     let pairingFileURL = URL.documentsDirectory.appendingPathComponent("pairingFile.plist")
     
     guard FileManager.default.fileExists(atPath: pairingFileURL.path) else {
         heartbeatStartPending = false
+        heartbeatPendingShowUI = true
         return
     }
     
@@ -768,6 +788,7 @@ func startHeartbeatInBackground(requireVPNConnection: Bool? = nil) {
         if !heartbeatStartPending {
             print("Heartbeat start deferred until VPN connects")
         }
+        heartbeatPendingShowUI = showErrorUI
         heartbeatStartPending = true
         return
     }
@@ -777,6 +798,7 @@ func startHeartbeatInBackground(requireVPNConnection: Bool? = nil) {
     }
     
     heartbeatStartPending = false
+    heartbeatPendingShowUI = true
     heartbeatStartInProgress = true
     
     DispatchQueue.global(qos: .userInteractive).async {
@@ -798,6 +820,7 @@ func startHeartbeatInBackground(requireVPNConnection: Bool? = nil) {
             let err2 = error as NSError
             let code = err2.code
             print("Error: \(error.localizedDescription) (Code: \(code))")
+            guard showErrorUI else { return }
             DispatchQueue.main.async {
                 if code == -9 {
                     do {
