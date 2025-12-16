@@ -274,7 +274,7 @@ struct SettingsView: View {
                                 .stroke(Color.white.opacity(0.12), lineWidth: 1)
                         )
                 }
-                Text("StikDebug 26")
+                Text("StikDebug")
                     .font(.title2.weight(.semibold))
                     .foregroundColor(.primary)
             }
