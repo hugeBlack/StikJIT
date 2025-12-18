@@ -231,7 +231,7 @@ struct SettingsView: View {
                         
                         RunLoop.current.add(progressTimer, forMode: .common)
                         DispatchQueue.main.async {
-                            startHeartbeatInBackground(requireVPNConnection: false)
+                            startHeartbeatInBackground()
                         }
                         
                     } catch {

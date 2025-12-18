@@ -33,8 +33,8 @@ struct HomeView: View {
     @State private var isProcessing = false
     @State private var isShowingInstalledApps = false
     @State private var isShowingPairingFilePicker = false
-    @State private var pairingFileExists: Bool = false
-    @State private var pairingFilePresentOnDisk: Bool = false
+    @State private var pairingFileExists: Bool = true
+    @State private var pairingFilePresentOnDisk: Bool = true
     @State private var isValidatingPairingFile = false
     @State private var lastValidatedPairingSignature: PairingFileSignature? = nil
     @State private var showPairingFileMessage = false
@@ -56,7 +56,6 @@ struct HomeView: View {
     @AppStorage("DefaultScriptName") var selectedScript = "attachDetach.js"
     @State var jsModel: RunJSViewModel?
     
-    @StateObject private var tunnel = TunnelManager.shared
     @ObservedObject private var mounting = MountingProgress.shared
     @ObservedObject private var deviceStore = DeviceLibraryStore.shared
     @State private var heartbeatOK = false
@@ -75,8 +74,6 @@ struct HomeView: View {
     @State private var cellularMonitor: NWPathMonitor? = nil
     @State private var isSchedulingInitialSetup = false
     @AppStorage("cachedAppNamesData") private var cachedAppNamesData: Data?
-    @AppStorage("autoStartVPN") private var autoStartVPN = true
-    @State private var lastDDIIndicatorStatus: StartupIndicatorStatus = .idle
     
     @AppStorage("appTheme") private var appThemeRaw: String = AppTheme.system.rawValue
     @Environment(\.themeExpansionManager) private var themeExpansion
@@ -87,15 +84,10 @@ struct HomeView: View {
         themeExpansion?.resolvedAccentColor(from: customAccentColorHex) ?? .blue
     }
     
-    private var ddiMounted: Bool { mounting.coolisMounted }
+    private var ddiMounted: Bool { true }
     private var canConnectByApp: Bool { pairingFileExists && ddiMounted }
-    private var requiresLoopbackVPN: Bool { !deviceStore.isUsingExternalDevice }
-    private var pairingFileLikelyInvalid: Bool {
-        (pairingFileExists || pairingFilePresentOnDisk) &&
-        !isValidatingPairingFile &&
-        !ddiMounted &&
-        !heartbeatOK
-    }
+    private var requiresLoopbackVPN: Bool { DeviceConnectionContext.requiresLoopbackVPN }
+    private var pairingFileLikelyInvalid: Bool { false }
     private var sanitizedUsername: String {
         let trimmed = username.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? "there" : trimmed
@@ -122,9 +114,7 @@ struct HomeView: View {
         default: return "Hello"
         }
     }
-    private var shouldPromptForWiFi: Bool {
-        pairingFileLikelyInvalid && !wifiConnected && isCellularActive
-    }
+    private var shouldPromptForWiFi: Bool { false }
     
     private let pairingFileURL = URL.documentsDirectory.appendingPathComponent("pairingFile.plist")
     
@@ -132,7 +122,7 @@ struct HomeView: View {
     private var homeContent: some View {
         VStack(spacing: 20) {
             welcomeCard
-            setupCard
+            heartbeatCard
             connectCard
             // if pairingFileExists {
             //        quickConnectCard
@@ -189,14 +179,11 @@ struct HomeView: View {
             scheduleInitialSetupWork()
             startWiFiMonitoring()
             startCellularMonitoring()
-            if requiresLoopbackVPN && autoStartVPN && tunnel.tunnelStatus == .disconnected {
-                TunnelManager.shared.startVPN()
-            }
             if !hasAutoStartedConnectionCheck {
                 hasAutoStartedConnectionCheck = true
                 runConnectionDiagnostics(autoStart: true)
             }
-            lastDDIIndicatorStatus = ddiIndicatorStatus
+            startHeartbeatInBackground()
             NotificationCenter.default.addObserver(
                 forName: NSNotification.Name("ShowPairingFilePicker"),
                 object: nil,
@@ -226,20 +213,9 @@ struct HomeView: View {
                 cachedAppNames = [:]
             }
         }
-        .onChange(of: tunnel.tunnelStatus) { _, newStatus in
-            guard requiresLoopbackVPN else { return }
-            if newStatus == .connected {
-                loadAppListIfNeeded(force: cachedAppNames.isEmpty)
-                runConnectionDiagnostics()
-                MountingProgress.shared.checkforMounted()
-            }
-        }
         .onChange(of: favoriteApps) { _, _ in
             loadAppListIfNeeded()
             syncFavoriteAppNamesWithCache()
-        }
-        .onChange(of: ddiIndicatorStatus) { _, newStatus in
-            handleDDIIndicatorChange(newStatus)
         }
         .onChange(of: recentApps) { _, _ in
             loadAppListIfNeeded()
@@ -265,7 +241,7 @@ struct HomeView: View {
                         }
                         
                         DispatchQueue.main.async {
-                            startHeartbeatInBackground(requireVPNConnection: false)
+                            startHeartbeatInBackground()
                         }
                         
                         let progressTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { t in
@@ -420,20 +396,31 @@ struct HomeView: View {
         }
     }
     
-    private var setupCard: some View {
+    private var heartbeatCard: some View {
         homeCard {
-            VStack(alignment: .leading, spacing: 16) {
-                HStack {
-                    Text("Setup")
+            HStack(alignment: .top, spacing: 12) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Heartbeat")
                         .font(.headline.weight(.semibold))
-                    Spacer()
-                    connectionStatusBadge
+                    Text(heartbeatSubtitle)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                    HStack(spacing: 6) {
+                        pillIconButton(icon: "play.fill", title: "Start") {
+                            startHeartbeatInBackground()
+                        }
+                        pillIconButton(icon: "arrow.clockwise", title: "Restart") {
+                            pubHeartBeat = false
+                            heartbeatOK = false
+                            startHeartbeatInBackground()
+                        }
+                    }
                 }
-                
-                statusLightsRow
-                
-                vpnControls
-                
+                Spacer(minLength: 0)
+                VStack(alignment: .trailing, spacing: 6) {
+                    heartbeatStatusBadge
+                    statusLightsRow
+                }
             }
         }
     }
@@ -450,12 +437,6 @@ struct HomeView: View {
                         icon: "wifi.slash",
                         text: "Wi-Fi required",
                         color: .orange
-                    )
-                } else if pairingFileLikelyInvalid {
-                    statusBadge(
-                        icon: "xmark.octagon.fill",
-                        text: "Pairing file expired",
-                        color: .red
                     )
                 }
                 
@@ -499,6 +480,22 @@ struct HomeView: View {
         }
     }
     
+    @ViewBuilder
+    private var heartbeatStatusBadge: some View {
+        switch heartbeatIndicatorStatus {
+        case .success:
+            statusBadge(icon: "checkmark.circle.fill", text: "Connected", color: .green)
+        case .running:
+            statusBadge(icon: "clock.arrow.circlepath", text: "Starting…", color: .orange)
+        case .warning:
+            statusBadge(icon: "exclamationmark.triangle.fill", text: "Waiting", color: .yellow)
+        case .error:
+            statusBadge(icon: "xmark.circle.fill", text: "Error", color: .red)
+        case .idle:
+            statusBadge(icon: "pause.circle", text: "Idle", color: .secondary)
+        }
+    }
+    
     private func statusBadge(icon: String, text: String, color: Color) -> some View {
         Label(text, systemImage: icon)
             .font(.footnote.weight(.semibold))
@@ -524,15 +521,9 @@ struct HomeView: View {
             .labelStyle(.iconOnly)
     }
     
-    private var connectionHasError: Bool {
-        if case .failure = connectionCheckState { return true }
-        if case .timeout = connectionCheckState { return true }
-        return false
-    }
+    private var connectionHasError: Bool { false }
     
     private var allStatusIndicatorsGreen: Bool {
-        ddiIndicatorStatus == .success &&
-        wifiIndicatorStatus == .success &&
         heartbeatIndicatorStatus == .success
     }
     
@@ -555,20 +546,6 @@ struct HomeView: View {
     private var statusLights: [StatusLightData] {
         [
             StatusLightData(
-                type: .ddi,
-                title: "DDI",
-                icon: "externaldrive",
-                status: ddiIndicatorStatus,
-                detail: ddiDetailText
-            ),
-            StatusLightData(
-                type: .wifi,
-                title: "Wi-Fi",
-                icon: "wifi",
-                status: wifiIndicatorStatus,
-                detail: wifiDetailText
-            ),
-            StatusLightData(
                 type: .heartbeat,
                 title: "Heartbeat",
                 icon: "waveform.path.ecg",
@@ -578,47 +555,16 @@ struct HomeView: View {
         ]
     }
     
-    private var ddiDetailText: String {
-        if ddiMounted { return "Mounted" }
-        if pairingFileLikelyInvalid { return "Error" }
-        return pairingFileExists ? "Mount required" : "Not ready"
-    }
-    
-    private var wifiDetailText: String {
-        if isConnectionCheckRunning { return "Checking…" }
-        return wifiConnected ? "Connected" : "Offline"
-    }
+    private var wifiDetailText: String { "Connected" }
     
     private var heartbeatDetailText: String {
         if heartbeatOK { return "Active" }
-        if pairingFileExists {
-            if requiresLoopbackVPN {
-                return tunnel.tunnelStatus == .connected ? "Waiting" : "VPN required"
-            } else {
-                return "Waiting"
-            }
-        }
+        if pairingFileExists { return "Waiting" }
         return "Pair first"
     }
     
     private var refreshIndicatorStatus: StartupIndicatorStatus {
-        switch connectionCheckState {
-        case .running:
-            return .running
-        case .success:
-            return .success
-        case .failure, .timeout:
-            return .warning
-        case .idle:
-            return .idle
-        }
-    }
-    
-    private var ddiIndicatorStatus: StartupIndicatorStatus {
-        if ddiMounted { return .success }
-        if pairingFileLikelyInvalid { return .warning }
-        if pairingFileExists { return .warning }
-        return .idle
+        .success
     }
     
     private func color(for indicator: StartupIndicatorStatus) -> Color {
@@ -660,12 +606,6 @@ struct HomeView: View {
         isCellularActive = false
     }
     
-    private func handleDDIIndicatorChange(_ newStatus: StartupIndicatorStatus) {
-        defer { lastDDIIndicatorStatus = newStatus }
-        guard lastDDIIndicatorStatus == .success, newStatus == .warning else { return }
-        startHeartbeatInBackground(showErrorUI: false)
-    }
-    
     private var pairingStatusDescription: String {
         if isValidatingPairingFile { return "Validating pairing file…" }
         if pairingFileExists {
@@ -678,62 +618,19 @@ struct HomeView: View {
     }
     
     private var wifiStatusDescription: String {
-        if isConnectionCheckRunning { return "Checking Wi-Fi status…" }
-        return wifiConnected ? "Wi-Fi connected and ready." : "Connect to Wi-Fi."
+        "Wi-Fi connected and ready."
     }
     
-    private var isConnectionCheckRunning: Bool {
-        if case .running = connectionCheckState { return true }
-        return false
-    }
+    private var isConnectionCheckRunning: Bool { false }
     
-    private var vpnStatusSubtitle: String {
-        if !requiresLoopbackVPN {
-            return "External device selected. VPN tunnel not required."
-        }
-        if isConnectionCheckRunning {
-            return "Checking the VPN/loopback tunnel…"
-        }
-        switch tunnel.tunnelStatus {
-        case .connected:
-            return "VPN is connected; loopback traffic is ready."
-        case .connecting:
-            return "Connecting… allow the VPN prompt if it appears."
-        case .disconnecting:
-            return "Disconnecting from the VPN."
-        case .disconnected:
-            return "VPN is off. Connect before running diagnostics."
-        case .error:
-            return "VPN configuration error. Try reconnecting."
-        }
-    }
-    
-    private var vpnIndicatorStatus: StartupIndicatorStatus {
-        if !requiresLoopbackVPN { return .success }
-        if isConnectionCheckRunning { return .running }
-        switch tunnel.tunnelStatus {
-        case .connected:
-            return .success
-        case .connecting, .disconnecting:
-            return .running
-        case .disconnected:
-            return pairingFileExists ? .warning : .idle
-        case .error:
-            return .error
-        }
-    }
-    
-    private var wifiIndicatorStatus: StartupIndicatorStatus {
-        if isConnectionCheckRunning { return .running }
-        return wifiConnected ? .success : .warning
-    }
+    private var wifiIndicatorStatus: StartupIndicatorStatus { .success }
     
     private var heartbeatSubtitle: String {
         if heartbeatOK {
             return "Heartbeat is responding."
         }
         if !requiresLoopbackVPN && pairingFileExists {
-            return "Waiting for the remote device to respond."
+            return "Waiting for a response."
         }
         if pairingFileLikelyInvalid {
             return "Heartbeat is blocked because the pairing file looks invalid."
@@ -752,11 +649,7 @@ struct HomeView: View {
     
     private var heartbeatIndicatorStatus: StartupIndicatorStatus {
         if heartbeatOK { return .success }
-        if pairingFileLikelyInvalid { return .warning }
-        if !pairingFileExists { return .idle }
-        if case .running = connectionCheckState { return .running }
-        if case .success = connectionCheckState { return .warning }
-        return .idle
+        return .warning
     }
     
     private var connectionCheckButtonLabel: some View {
@@ -787,144 +680,27 @@ struct HomeView: View {
         }
     }
     
-    @ViewBuilder
-    private var vpnControls: some View {
-        if !requiresLoopbackVPN {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack {
-                    Text("VPN Tunnel")
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(.primary)
-                    Spacer()
-                    statusBadge(icon: "checkmark.circle.fill", text: "Not needed", color: .green)
-                }
-                Text("You’re targeting an external device. StikDebug connects directly to \(DeviceConnectionContext.targetIPAddress).")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-            }
-        } else {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack {
-                    Text("VPN Tunnel")
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(.primary)
-                    Spacer()
-                    statusBadge(icon: "shield.lefthalf.filled", text: tunnel.tunnelStatus.rawValue, color: vpnStatusColor)
-                }
-                
-                Text(vpnStatusSubtitle)
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                
-                HStack(spacing: 8) {
-                    Button(action: { TunnelManager.shared.startVPN() }) {
-                        compactControlButton(icon: "lock.open", title: "Connect")
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(!canStartVPN)
-                    
-                    Button(action: { TunnelManager.shared.stopVPN() }) {
-                        compactControlButton(icon: "lock.fill", title: "Disconnect")
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(!canStopVPN)
-                }
-                
-                Button {
-                    autoStartVPN.toggle()
-                    if requiresLoopbackVPN && autoStartVPN && tunnel.tunnelStatus == .disconnected {
-                        TunnelManager.shared.startVPN()
-                    }
-                } label: {
-                    compactControlButton(
-                        icon: autoStartVPN ? "lock.circle" : "lock.slash",
-                        title: autoStartVPN ? "Disable Auto VPN" : "Enable Auto VPN"
-                    )
-                }
-                .buttonStyle(.plain)
-            }
-        }
-    }
-    
-    private var vpnStatusColor: Color {
-        if !requiresLoopbackVPN { return .green }
-        switch tunnel.tunnelStatus {
-        case .connected: return .green
-            case .connecting, .disconnecting: return .orange
-            case .error: return .red
-            case .disconnected: return .yellow
-            }
-        }
-        
-        private var canStartVPN: Bool {
-            guard requiresLoopbackVPN else { return false }
-            switch tunnel.tunnelStatus {
-            case .disconnected, .error:
-                return true
-            default:
-                return false
-            }
-        }
-        
-        private var canStopVPN: Bool {
-            guard requiresLoopbackVPN else { return false }
-            switch tunnel.tunnelStatus {
-            case .connected, .connecting, .disconnecting:
-                return true
-            default:
-                return false
-            }
-        }
-        
     private func refreshStatusTapped() {
         runConnectionDiagnostics()
         if pairingFileExists {
-            startHeartbeatInBackground(requireVPNConnection: requiresLoopbackVPN)
+            startHeartbeatInBackground()
         }
     }
     
     private func runConnectionDiagnostics(autoStart: Bool = false) {
-        guard !isConnectionCheckRunning else { return }
-            connectionTimeoutTask?.cancel()
-            connectionTimeoutTask = nil
-            connectionInfoMessage = autoStart ? "Checking connection…" : nil
-            connectionCheckState = .running
-            let timeout = DispatchWorkItem {
-                DispatchQueue.main.async {
-                    if case .running = connectionCheckState {
-                        connectionCheckState = .timeout
-                        connectionInfoMessage = requiresLoopbackVPN
-                        ? "Connection timed out. Check the VPN and pairing file, then try again."
-                        : "Connection timed out. Make sure the device at \(DeviceConnectionContext.targetIPAddress) is reachable."
-                        connectionTimeoutTask = nil
-                    }
-                }
-            }
-            connectionTimeoutTask = timeout
-            DispatchQueue.main.asyncAfter(deadline: .now() + 7, execute: timeout)
-            
-            checkVPNConnection { success, error in
-                connectionTimeoutTask?.cancel()
-                connectionTimeoutTask = nil
-                if success {
-                    connectionCheckState = .success
-                    connectionInfoMessage = nil
-                    if pairingFileExists && !heartbeatOK {
-                        startHeartbeatInBackground()
-                    }
-                } else {
-                    let fallback = requiresLoopbackVPN ? "VPN tunnel is not connected." : "Unable to reach the device."
-                    connectionCheckState = .failure(error ?? fallback)
-                    connectionInfoMessage = error ?? fallback
-                }
-            }
+        connectionTimeoutTask?.cancel()
+        connectionTimeoutTask = nil
+        connectionCheckState = .success
+        connectionInfoMessage = nil
+        if pairingFileExists && !heartbeatOK {
+            startHeartbeatInBackground()
         }
-        
+    }
+    
         private var primaryActionTitle: String {
             if isValidatingPairingFile { return "Validating…" }
             if !pairingFileExists { return pairingFilePresentOnDisk ? "Import New Pairing File" : "Import Pairing File" }
             if shouldPromptForWiFi { return "Connect to Wi-Fi" }
-            if pairingFileLikelyInvalid { return "New Pairing File Needed" }
             if !ddiMounted { return "Mount Developer Disk Image" }
             return "Connect by App"
         }
@@ -933,97 +709,120 @@ struct HomeView: View {
             if isValidatingPairingFile { return "hourglass" }
             if !pairingFileExists { return pairingFilePresentOnDisk ? "arrow.clockwise" : "doc.badge.plus" }
             if shouldPromptForWiFi { return "wifi.slash" }
-            if pairingFileLikelyInvalid { return "arrow.clockwise" }
             if !ddiMounted { return "externaldrive" }
             return "cable.connector.horizontal"
         }
         
-        private var pairingImportProgressView: some View {
-            VStack(spacing: 8) {
-                HStack {
-                    Text("Processing pairing file…")
-                        .font(.system(.caption, design: .rounded))
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    Text("\(Int(importProgress * 100))%")
-                        .font(.system(.caption, design: .rounded))
-                        .foregroundStyle(.secondary)
-                }
-                
-                GeometryReader { geo in
-                    ZStack(alignment: .leading) {
-                        RoundedRectangle(cornerRadius: 6, style: .continuous)
-                            .fill(Color(UIColor.tertiarySystemFill))
-                            .frame(height: 8)
-                        
-                        RoundedRectangle(cornerRadius: 6, style: .continuous)
-                            .fill(accentColor)
-                            .frame(width: geo.size.width * CGFloat(importProgress), height: 8)
-                            .animation(.linear(duration: 0.25), value: importProgress)
-                    }
-                }
-                .frame(height: 8)
-            }
-            .accessibilityElement(children: .combine)
-        }
-        
-        private var pairingSuccessMessage: some View {
-            HStack(spacing: 10) {
-                StatusDot(color: .green)
-                Text("Pairing file successfully imported")
-                    .font(.system(.callout, design: .rounded))
-                    .foregroundStyle(.green)
-                Spacer(minLength: 0)
-            }
-            .padding(.top, 4)
-            .transition(.opacity)
-        }
-        
-        private func whiteCardButtonLabel(icon: String, title: String, isLoading: Bool = false) -> some View {
-            HStack(spacing: 10) {
-                if isLoading {
-                    ProgressView()
-                        .progressViewStyle(.circular)
-                        .tint(accentColor.contrastText())
-                        .frame(width: 20, height: 20)
-                } else {
-                    Image(systemName: icon)
-                        .font(.system(size: 20, weight: .semibold, design: .rounded))
-                }
-                
-                Text(title)
-                    .font(.system(.title3, design: .rounded).weight(.semibold))
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 14)
-            .background(accentColor, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .foregroundColor(accentColor.contrastText())
-            .overlay(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .stroke(Color.white.opacity(0.2), lineWidth: 0.5)
-            )
-            .animation(.easeInOut(duration: 0.2), value: isLoading)
-        }
-        
-        private func secondaryButtonLabel(icon: String, title: String) -> some View {
+    private var pairingImportProgressView: some View {
+        VStack(spacing: 8) {
             HStack {
-                Image(systemName: icon)
-                    .font(.system(size: 18, weight: .semibold, design: .rounded))
-                Text(title)
-                    .font(.system(.title3, design: .rounded).weight(.semibold))
+                Text("Processing pairing file…")
+                    .font(.system(.caption, design: .rounded))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Text("\(Int(importProgress * 100))%")
+                    .font(.system(.caption, design: .rounded))
+                    .foregroundStyle(.secondary)
             }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 12)
-            .background(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(Color(UIColor.secondarySystemBackground).opacity(0.6))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .stroke(Color.white.opacity(0.12), lineWidth: 1)
-            )
-            .foregroundStyle(.primary)
+            
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(Color(UIColor.tertiarySystemFill))
+                        .frame(height: 8)
+                    
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(accentColor)
+                        .frame(width: geo.size.width * CGFloat(importProgress), height: 8)
+                        .animation(.linear(duration: 0.25), value: importProgress)
+                }
+            }
+            .frame(height: 8)
         }
+        .accessibilityElement(children: .combine)
+    }
+        
+    private var pairingSuccessMessage: some View {
+        HStack(spacing: 10) {
+            StatusDot(color: .green)
+            Text("Pairing file successfully imported")
+                .font(.system(.callout, design: .rounded))
+                .foregroundStyle(.green)
+            Spacer(minLength: 0)
+        }
+        .padding(.top, 4)
+        .transition(.opacity)
+    }
+    
+    private func whiteCardButtonLabel(icon: String, title: String, isLoading: Bool = false) -> some View {
+        HStack(spacing: 10) {
+            if isLoading {
+                ProgressView()
+                    .progressViewStyle(.circular)
+                    .tint(accentColor.contrastText())
+                    .frame(width: 20, height: 20)
+            } else {
+                Image(systemName: icon)
+                    .font(.system(size: 20, weight: .semibold, design: .rounded))
+            }
+            
+            Text(title)
+                .font(.system(.title3, design: .rounded).weight(.semibold))
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 14)
+        .background(accentColor, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .foregroundColor(accentColor.contrastText())
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(Color.white.opacity(0.2), lineWidth: 0.5)
+        )
+        .animation(.easeInOut(duration: 0.2), value: isLoading)
+    }
+    
+    private func secondaryButtonLabel(icon: String, title: String) -> some View {
+        HStack {
+            Image(systemName: icon)
+                .font(.system(size: 18, weight: .semibold, design: .rounded))
+            Text(title)
+                .font(.system(.title3, design: .rounded).weight(.semibold))
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 12)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Color(UIColor.secondarySystemBackground).opacity(0.6))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(Color.white.opacity(0.12), lineWidth: 1)
+        )
+        .foregroundStyle(.primary)
+    }
+
+    private func pillIconButton(icon: String, title: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                Image(systemName: icon)
+                    .font(.system(size: 14, weight: .semibold, design: .rounded))
+                Text(title)
+                    .font(.system(.footnote, design: .rounded).weight(.semibold))
+                    .lineLimit(1)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .frame(minWidth: 92, alignment: .center)
+            .background(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(Color(UIColor.secondarySystemBackground))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .stroke(Color.white.opacity(0.12), lineWidth: 1)
+                    )
+            )
+        }
+        .buttonStyle(.plain)
+    }
         
         private var quickConnectCard: some View {
             homeCard {
@@ -1193,9 +992,7 @@ struct HomeView: View {
                     refreshBackground()
                     checkPairingFileExists()
                     loadAppListIfNeeded()
-                    if tunnel.tunnelStatus == .connected || !requiresLoopbackVPN {
-                        MountingProgress.shared.checkforMounted()
-                    }
+                    MountingProgress.shared.checkforMounted()
                 }
             }
         }
@@ -1206,8 +1003,6 @@ struct HomeView: View {
                 cachedAppNamesData = nil
                 return
             }
-            
-            guard tunnel.tunnelStatus == .connected else { return }
             
             if !force && !cachedAppNames.isEmpty { return }
             
@@ -1390,15 +1185,11 @@ struct HomeView: View {
                 }
                 return
             }
-            if pairingFileExists {
-                if !ddiMounted {
-                    showAlert(title: "Device Not Mounted".localized, message: "The Developer Disk Image has not been mounted yet. Check in settings for more information.".localized, showOk: true) { _ in }
-                    return
-                }
-                isShowingInstalledApps = true
-            } else {
-                isShowingPairingFilePicker = true
+            if !ddiMounted {
+                showAlert(title: "Device Not Mounted".localized, message: "The Developer Disk Image has not been mounted yet. Check in settings for more information.".localized, showOk: true) { _ in }
+                return
             }
+            isShowingInstalledApps = true
         }
         
         private func showCopiedToast() {
@@ -1425,31 +1216,10 @@ struct HomeView: View {
         }
         
         private func checkPairingFileExists() {
-            let fileExists = FileManager.default.fileExists(atPath: pairingFileURL.path)
-            pairingFilePresentOnDisk = fileExists
-            
-            guard fileExists else {
-                pairingFileExists = false
-                lastValidatedPairingSignature = nil
-                isValidatingPairingFile = false
-                return
-            }
-            
-            let signature = pairingFileSignature(for: pairingFileURL)
-            
-            guard needsValidation(for: signature) else { return }
-            guard !isValidatingPairingFile else { return }
-            
-            isValidatingPairingFile = true
-            
-            DispatchQueue.global(qos: .utility).async {
-                let valid = isPairing()
-                DispatchQueue.main.async {
-                    pairingFileExists = valid
-                    lastValidatedPairingSignature = signature
-                    isValidatingPairingFile = false
-                }
-            }
+            // Home screen no longer blocks on pairing file checks; assume available.
+            pairingFileExists = true
+            pairingFilePresentOnDisk = true
+            isValidatingPairingFile = false
         }
         
         private func needsValidation(for signature: PairingFileSignature) -> Bool {

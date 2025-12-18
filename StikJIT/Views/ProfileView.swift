@@ -127,6 +127,7 @@ struct ProfileView: View {
     @State private var alertSuccess = false
     
     @State private var profiles: [Profile] = []
+    @AppStorage("cachedProfilesData") private var cachedProfilesData: Data?
     @State private var confirmRemove = false
     @State private var removeTargetName: String = ""
     @State private var removeTargetUUID: String = ""
@@ -208,7 +209,7 @@ struct ProfileView: View {
                     }
                     
                     Button {
-                        Task {await loadProfiles()}
+                        Task { await loadProfiles(force: true) }
                     } label: {
                         Label("Reload", systemImage: "arrow.clockwise")
                     }
@@ -348,15 +349,42 @@ struct ProfileView: View {
         confirmRemove = true
     }
     
-    func loadProfiles() async {
+    private func restoreCachedProfilesIfNeeded() async -> Bool {
+        guard profiles.isEmpty, let cachedProfilesData else { return false }
+        
+        let cachedDatas: [Data]? = try? await Task.detached(priority: .userInitiated) {
+            try? JSONDecoder().decode([Data].self, from: cachedProfilesData)
+        }.value
+        
+        guard let cachedDatas, !cachedDatas.isEmpty else { return false }
+        let restoredProfiles = cachedDatas.map { Profile(data: $0) }
+        await MainActor.run {
+            guard self.profiles.isEmpty else { return }
+            self.profiles = restoredProfiles
+            self.working = false
+        }
+        return true
+    }
+    
+    func loadProfiles(force: Bool = false) async {
+        if !force {
+            if !profiles.isEmpty {
+                await MainActor.run { working = false }
+                return
+            }
+            if await restoreCachedProfilesIfNeeded() { return }
+        }
+        
         await MainActor.run { working = true }
         do {
             let profileDatas = try await Task.detached(priority: .userInitiated) {
                 try JITEnableContext.shared.fetchAllProfiles()
             }.value
             let parsedProfiles = profileDatas.map { Profile(data: $0) }
+            let encodedProfiles = try? JSONEncoder().encode(profileDatas)
             await MainActor.run {
                 self.profiles = parsedProfiles
+                self.cachedProfilesData = encodedProfiles
                 self.working = false
             }
         } catch {
@@ -385,7 +413,7 @@ struct ProfileView: View {
             alertSuccess = true
             alert = true
             // Reload profiles after removal
-            await loadProfiles()
+            await loadProfiles(force: true)
         } catch {
             alertMsg = error.localizedDescription
             alertTitle = "Failed to Remove Profile"
@@ -420,7 +448,7 @@ struct ProfileView: View {
             alert = true
             
             // Reload profiles after adding
-            await loadProfiles()
+            await loadProfiles(force: true)
         } catch {
             alertMsg = error.localizedDescription
             alertTitle = "Failed to Add Profile"

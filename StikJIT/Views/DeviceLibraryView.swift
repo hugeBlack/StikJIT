@@ -115,7 +115,7 @@ struct DeviceLibraryView: View {
                     if let refreshedDevice = store.devices.first(where: { $0.id == originalDevice.id }) {
                         do {
                             try store.activate(device: refreshedDevice)
-                            startHeartbeatInBackground(requireVPNConnection: false)
+                            startHeartbeatInBackground()
                             alert = DeviceAlert(title: "Pairing Updated",
                                                 message: "\(refreshedDevice.name)'s pairing file was refreshed.",
                                                 isError: false)
@@ -164,10 +164,10 @@ struct DeviceLibraryView: View {
         let activatingDefault = store.isDefaultDevice(device)
         do {
             try store.activate(device: device)
-            startHeartbeatInBackground(requireVPNConnection: false)
-            let title = activatingDefault ? "Loopback Active" : "Device Activated"
+            startHeartbeatInBackground()
+            let title = activatingDefault ? "Local Device Active" : "Device Activated"
             let message = activatingDefault
-                ? "Switched back to debugging this device over the loopback VPN."
+                ? "Switched back to debugging on this device."
                 : "\(device.name) is now active. The heartbeat will refresh automatically."
             alert = DeviceAlert(title: title, message: message, isError: false)
         } catch {

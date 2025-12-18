@@ -19,12 +19,6 @@ func progressCallback(progress: size_t, total: size_t, context: UnsafeMutableRaw
 }
 
 func isMounted() -> Bool {
-    if DeviceConnectionContext.requiresLoopbackVPN {
-        guard TunnelManager.shared.tunnelStatus == .connected else {
-            return false
-        }
-    }
-    
     do {
         let result = try JITEnableContext.shared.getMountedDeviceCount()
         return result > 0

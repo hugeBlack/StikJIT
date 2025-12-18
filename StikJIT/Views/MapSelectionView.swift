@@ -122,7 +122,7 @@ struct LocationSimulationView: View {
     }
 
     private var deviceIP: String {
-        UserDefaults.standard.string(forKey: "TunnelDeviceIP") ?? "10.7.0.2"
+        UserDefaults.standard.string(forKey: "TunnelDeviceIP") ?? "10.7.0.1"
     }
 
     var body: some View {

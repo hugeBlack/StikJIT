@@ -8,7 +8,6 @@
 import SwiftUI
 import Network
 import UniformTypeIdentifiers
-import NetworkExtension
 
 // Register default settings before the app starts
 private func registerAdvancedOptionsDefault() {
@@ -64,17 +63,6 @@ struct WelcomeSheetView: View {
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                         
-                        // VPN explanation
-                        VStack(alignment: .leading, spacing: 6) {
-                            Label("Why VPN permission?", systemImage: "lock.shield.fill")
-                                .foregroundColor(accent)
-                                .font(.headline)
-                            Text("The next step will prompt you to allow VPN permissions. This is necessary for the app to function properly. The VPN configuration allows your device to securely connect to itself — nothing more. No data is collected or sent externally; everything stays on your device.")
-                                .font(.callout)
-                                .foregroundColor(.secondary)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                        
                         // Continue button
                         Button(action: { onDismiss?() }) {
                             Text("Continue")
@@ -121,221 +109,6 @@ struct WelcomeSheetView: View {
             }
         }
         // Inherit preferredColorScheme from BackgroundContainer (no local override)
-    }
-}
-
-// MARK: - VPN Logger
-
-class VPNLogger: ObservableObject {
-    @Published var logs: [String] = []
-    static var shared = VPNLogger()
-    private init() {}
-    
-    func log(_ message: Any, file: String = #file, function: String = #function, line: Int = #line) {
-        #if DEBUG
-        let fileName = (file as NSString).lastPathComponent
-        print("[\(fileName):\(line)] \(function): \(message)")
-        #endif
-        logs.append("\(message)")
-    }
-}
-
-// MARK: - Tunnel Manager
-
-class TunnelManager: ObservableObject {
-    @Published var tunnelStatus: TunnelStatus = .disconnected
-    static var shared = TunnelManager()
-    
-    private var vpnManager: NETunnelProviderManager?
-    private var pendingStopRequest = false
-    private var tunnelDeviceIp: String {
-        UserDefaults.standard.string(forKey: "TunnelDeviceIP") ?? "10.7.0.0"
-    }
-    private var tunnelFakeIp: String {
-        UserDefaults.standard.string(forKey: "TunnelFakeIP") ?? "10.7.0.1"
-    }
-    private var tunnelSubnetMask: String {
-        UserDefaults.standard.string(forKey: "TunnelSubnetMask") ?? "255.255.255.0"
-    }
-    private var tunnelBundleId: String {
-        Bundle.main.bundleIdentifier!.appending(".TunnelProv")
-    }
-    
-    enum TunnelStatus: String {
-        case disconnected = "Disconnected"
-        case connecting = "Connecting"
-        case connected = "Connected"
-        case disconnecting = "Disconnecting"
-        case error = "Error"
-    }
-    
-    private init() {
-        loadTunnelPreferences()
-        NotificationCenter.default.addObserver(self, selector: #selector(statusDidChange(_:)), name: .NEVPNStatusDidChange, object: nil)
-    }
-    
-    private func loadTunnelPreferences() {
-        NETunnelProviderManager.loadAllFromPreferences { [weak self] (managers, error) in
-            guard let self = self else { return }
-            DispatchQueue.main.async {
-                if let error = error {
-                    VPNLogger.shared.log("Error loading preferences: \(error.localizedDescription)")
-                    self.tunnelStatus = .error
-                    return
-                }
-                if let managers = managers, !managers.isEmpty {
-                    for manager in managers {
-                        if let proto = manager.protocolConfiguration as? NETunnelProviderProtocol,
-                           proto.providerBundleIdentifier == self.tunnelBundleId {
-                            self.vpnManager = manager
-                            self.updateTunnelStatus(from: manager.connection.status)
-                            VPNLogger.shared.log("Loaded existing tunnel configuration")
-                            break
-                        }
-                    }
-                    if self.vpnManager == nil, let firstManager = managers.first {
-                        self.vpnManager = firstManager
-                        self.updateTunnelStatus(from: firstManager.connection.status)
-                        VPNLogger.shared.log("Using existing tunnel configuration")
-                    }
-                    if self.pendingStopRequest, let manager = self.vpnManager {
-                        VPNLogger.shared.log("Pending stop request detected during preference load")
-                        self.stopVPN(with: manager)
-                    }
-                } else {
-                    VPNLogger.shared.log("No existing tunnel configuration found")
-                }
-            }
-        }
-    }
-    
-    @objc private func statusDidChange(_ notification: Notification) {
-        if let connection = notification.object as? NEVPNConnection {
-            updateTunnelStatus(from: connection.status)
-        }
-    }
-    
-    private func updateTunnelStatus(from connectionStatus: NEVPNStatus) {
-        DispatchQueue.main.async {
-            switch connectionStatus {
-            case .invalid, .disconnected:
-                self.tunnelStatus = .disconnected
-            case .connecting:
-                self.tunnelStatus = .connecting
-            case .connected:
-                self.tunnelStatus = .connected
-            case .disconnecting:
-                self.tunnelStatus = .disconnecting
-            case .reasserting:
-                self.tunnelStatus = .connecting
-            @unknown default:
-                self.tunnelStatus = .error
-            }
-            VPNLogger.shared.log("VPN status updated: \(self.tunnelStatus.rawValue)")
-            if connectionStatus == .connected && heartbeatStartPending {
-                startHeartbeatInBackground(showErrorUI: heartbeatPendingShowUI)
-            }
-        }
-    }
-    
-    private func createOrUpdateTunnelConfiguration(completion: @escaping (Bool) -> Void) {
-        NETunnelProviderManager.loadAllFromPreferences { [weak self] (managers, error) in
-            guard let self = self else { return completion(false) }
-            if let error = error {
-                VPNLogger.shared.log("Error loading preferences: \(error.localizedDescription)")
-                return completion(false)
-            }
-            
-            let manager: NETunnelProviderManager
-            if let existingManagers = managers, !existingManagers.isEmpty {
-                if let matchingManager = existingManagers.first(where: {
-                    ($0.protocolConfiguration as? NETunnelProviderProtocol)?.providerBundleIdentifier == self.tunnelBundleId
-                }) {
-                    manager = matchingManager
-                    VPNLogger.shared.log("Updating existing tunnel configuration")
-                } else {
-                    manager = existingManagers[0]
-                    VPNLogger.shared.log("Using first available tunnel configuration")
-                }
-            } else {
-                manager = NETunnelProviderManager()
-                VPNLogger.shared.log("Creating new tunnel configuration")
-            }
-            
-            manager.localizedDescription = "StikDebug"
-            let proto = NETunnelProviderProtocol()
-            proto.providerBundleIdentifier = self.tunnelBundleId
-            proto.serverAddress = "StikDebug's Local Network Tunnel"
-            manager.protocolConfiguration = proto
-            manager.isOnDemandEnabled = true
-            manager.isEnabled = true
-            
-            manager.saveToPreferences { [weak self] error in
-                guard let self = self else { return completion(false) }
-                DispatchQueue.main.async {
-                    if let error = error {
-                        VPNLogger.shared.log("Error saving tunnel configuration: \(error.localizedDescription)")
-                        completion(false)
-                        return
-                    }
-                    self.vpnManager = manager
-                    VPNLogger.shared.log("Tunnel configuration saved successfully")
-                    completion(true)
-                }
-            }
-        }
-    }
-    
-    func startVPN() {
-        if let manager = vpnManager {
-            startExistingVPN(manager: manager)
-        } else {
-            createOrUpdateTunnelConfiguration { [weak self] success in
-                guard let self = self, success else { return }
-                self.loadTunnelPreferences()
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                    if let manager = self.vpnManager {
-                        self.startExistingVPN(manager: manager)
-                    }
-                }
-            }
-        }
-    }
-    
-    private func startExistingVPN(manager: NETunnelProviderManager) {
-        guard tunnelStatus == .disconnected || tunnelStatus == .error else {
-            VPNLogger.shared.log("Ignoring VPN start; current status: \(tunnelStatus.rawValue)")
-            return
-        }
-        tunnelStatus = .connecting
-        let options: [String: NSObject] = [
-            "TunnelDeviceIP": tunnelDeviceIp as NSObject,
-            "TunnelFakeIP": tunnelFakeIp as NSObject,
-            "TunnelSubnetMask": tunnelSubnetMask as NSObject
-        ]
-        do {
-            try manager.connection.startVPNTunnel(options: options)
-            VPNLogger.shared.log("Network tunnel start initiated")
-        } catch {
-            tunnelStatus = .error
-            VPNLogger.shared.log("Failed to start tunnel: \(error.localizedDescription)")
-        }
-    }
-    
-    func stopVPN() {
-        guard let manager = vpnManager else {
-            pendingStopRequest = true
-            loadTunnelPreferences()
-            return
-        }
-        pendingStopRequest = false
-        stopVPN(with: manager)
-    }
-    
-    private func stopVPN(with manager: NETunnelProviderManager) {
-        tunnelStatus = .disconnecting
-        manager.connection.stopVPNTunnel()
-        VPNLogger.shared.log("Network tunnel stop initiated")
     }
 }
 
@@ -509,7 +282,6 @@ struct HeartbeatApp: App {
     @AppStorage("hasLaunchedBefore") var hasLaunchedBefore: Bool = false
     @AppStorage("customAccentColor") private var customAccentColorHex: String = ""
     @AppStorage("appTheme") private var appThemeRaw: String = AppTheme.system.rawValue
-    @AppStorage("autoStartVPN") private var autoStartVPN = true
     @State private var showWelcomeSheet: Bool = false
     @State private var show_alert = false
     @State private var alert_string = ""
@@ -556,14 +328,6 @@ struct HeartbeatApp: App {
                 }
             }
             UserDefaults.standard.set(currentDate, forKey: "VersionUpdateAlert")
-        }
-    }
-    
-    private func triggerAutoVPNStartIfNeeded() {
-        guard autoStartVPN, DeviceConnectionContext.requiresLoopbackVPN else { return }
-        let manager = TunnelManager.shared
-        if manager.tunnelStatus == .disconnected || manager.tunnelStatus == .error {
-            manager.startVPN()
         }
     }
     
@@ -629,11 +393,8 @@ struct HeartbeatApp: App {
             .tint(globalAccent)
             .onAppear {
                 // On first launch, present the welcome sheet.
-                // Otherwise, start the VPN automatically.
                 if !hasLaunchedBefore {
                     showWelcomeSheet = true
-                } else {
-                    triggerAutoVPNStartIfNeeded()
                 }
                 HeartbeatApp.updateUIKitTint(customHex: customAccentColorHex,
                                              hasAccess: themeExpansionManager.hasThemeExpansion)
@@ -650,10 +411,9 @@ struct HeartbeatApp: App {
             }
             .sheet(isPresented: $showWelcomeSheet) {
                 WelcomeSheetView {
-                    // When the user taps "Continue", mark the app as launched and start the VPN if allowed.
+                    // When the user taps "Continue", mark the app as launched.
                     hasLaunchedBefore = true
                     showWelcomeSheet = false
-                    triggerAutoVPNStartIfNeeded()
                 }
             }
         }
@@ -706,16 +466,6 @@ class MountingProgress: ObservableObject {
     }
     
     private func mount() {
-        if DeviceConnectionContext.requiresLoopbackVPN {
-            guard TunnelManager.shared.tunnelStatus == .connected else {
-                DispatchQueue.main.async {
-                    self.coolisMounted = false
-                    self.mountingThread = nil
-                }
-                return
-            }
-        }
-        
         let currentlyMounted = isMounted()
         DispatchQueue.main.async {
             self.coolisMounted = currentlyMounted
@@ -772,24 +522,13 @@ func isPairing() -> Bool {
     return true
 }
 
-func startHeartbeatInBackground(requireVPNConnection: Bool? = nil, showErrorUI: Bool = true) {
+func startHeartbeatInBackground(showErrorUI: Bool = true) {
     assert(Thread.isMainThread, "startHeartbeatInBackground must be called on the main thread")
     let pairingFileURL = URL.documentsDirectory.appendingPathComponent("pairingFile.plist")
     
     guard FileManager.default.fileExists(atPath: pairingFileURL.path) else {
         heartbeatStartPending = false
         heartbeatPendingShowUI = true
-        return
-    }
-    
-    let shouldRequireVPN = requireVPNConnection ?? DeviceConnectionContext.requiresLoopbackVPN
-    let vpnConnected = TunnelManager.shared.tunnelStatus == .connected
-    if shouldRequireVPN && !vpnConnected {
-        if !heartbeatStartPending {
-            print("Heartbeat start deferred until VPN connects")
-        }
-        heartbeatPendingShowUI = showErrorUI
-        heartbeatStartPending = true
         return
     }
     
@@ -845,7 +584,7 @@ func startHeartbeatInBackground(requireVPNConnection: Bool? = nil, showErrorUI: 
                 } else {
                     showAlert(
                         title: "Heartbeat Error",
-                        message: "Failed to connect to Heartbeat (\(code)). Are you connected to WiFi or is Airplane Mode enabled? Cellular data isn’t supported. Please launch the app at least once with WiFi enabled. After that, you can switch to cellular data to turn on the VPN, and once the VPN is active you can use Airplane Mode.",
+                        message: "Failed to connect to Heartbeat (\(code)). Make sure Wi‑Fi is enabled and the device is reachable. Launch the app at least once while online before trying again.",
                         showOk: false,
                         showTryAgain: true
                     ) { shouldTryAgain in
@@ -863,7 +602,7 @@ func startHeartbeatInBackground(requireVPNConnection: Bool? = nil, showErrorUI: 
 
 }
 
-func checkVPNConnection(callback: @escaping (Bool, String?) -> Void) {
+func checkDeviceConnection(callback: @escaping (Bool, String?) -> Void) {
     let targetIP = DeviceConnectionContext.targetIPAddress
     let host = NWEndpoint.Host(targetIP)
     let port = NWEndpoint.Port(rawValue: 62078)!
@@ -875,12 +614,7 @@ func checkVPNConnection(callback: @escaping (Bool, String?) -> Void) {
             connection?.cancel()
             DispatchQueue.main.async {
                 if timeoutWorkItem?.isCancelled == false {
-                    let message: String
-                    if DeviceConnectionContext.requiresLoopbackVPN {
-                        message = "[TIMEOUT] The loopback VPN is not connected. Try closing this app, turn it off and back on."
-                    } else {
-                        message = "[TIMEOUT] Could not reach the device at \(targetIP). Make sure it’s online and on the same network."
-                    }
+                    let message = "[TIMEOUT] Could not reach the device at \(targetIP). Make sure it’s online and on the same network."
                     callback(false, message)
                 }
             }
@@ -899,18 +633,7 @@ func checkVPNConnection(callback: @escaping (Bool, String?) -> Void) {
             timeoutWorkItem?.cancel()
             connection?.cancel()
             DispatchQueue.main.async {
-                let message: String
-                if DeviceConnectionContext.requiresLoopbackVPN {
-                    if error == NWError.posix(.ETIMEDOUT) {
-                        message = "The loopback VPN is not connected. Try closing the app, turn it off and back on."
-                    } else if error == NWError.posix(.ECONNREFUSED) {
-                        message = "Wi-Fi is not connected. StikDebug can't connect over cellular data while in loopback mode."
-                    } else {
-                        message = "VPN check error: \(error.localizedDescription)"
-                    }
-                } else {
-                    message = "Could not reach the device at \(targetIP): \(error.localizedDescription)"
-                }
+                let message = "Could not reach the device at \(targetIP): \(error.localizedDescription)"
                 callback(false, message)
             }
         default:

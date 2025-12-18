@@ -27,7 +27,7 @@ void startHeartbeat(IdevicePairingFile* pairing_file, IdeviceProviderHandle** pr
     addr.sin_port = htons(LOCKDOWN_PORT);
     
     NSString* deviceIP = [[NSUserDefaults standardUserDefaults] stringForKey:@"TunnelDeviceIP"];
-    inet_pton(AF_INET, deviceIP ? [deviceIP UTF8String] : "10.7.0.2", &addr.sin_addr);
+    inet_pton(AF_INET, deviceIP ? [deviceIP UTF8String] : "10.7.0.1", &addr.sin_addr);
     
     
     err = idevice_tcp_provider_new((struct sockaddr *)&addr, pairing_file,
