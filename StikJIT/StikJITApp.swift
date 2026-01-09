@@ -584,7 +584,7 @@ func startHeartbeatInBackground(showErrorUI: Bool = true) {
                 } else {
                     showAlert(
                         title: "Heartbeat Error",
-                        message: "Failed to connect to Heartbeat (\(code)). Make sure Wi‑Fi is enabled and the device is reachable. Launch the app at least once while online before trying again.",
+                        message: "Failed to connect to Heartbeat (\(code)). Make sure Wi‑Fi and LocalDevVPN are connected and that the device is reachable. Launch the app at least once while online before trying again.",
                         showOk: false,
                         showTryAgain: true
                     ) { shouldTryAgain in
