@@ -1314,7 +1314,7 @@ struct HomeView: View {
                 return ("Geode", "Geode.js")
             case "Manic EMU":
                 return ("manic", "manic.js")
-            case "UTM", "DolphiniOS":
+            case "UTM", "DolphiniOS", "Flycast":
                 return ("UTM-Dolphin", "UTM-Dolphin.js")
             default:
                 return nil
