@@ -539,6 +539,22 @@ struct SettingsView: View {
                 }
                 
                 Button(action: {
+                    if let url = URL(string: "https://apps.apple.com/us/app/localdevvpn/id6755608044") {
+                        UIApplication.shared.open(url)
+                    }
+                }) {
+                    HStack {
+                        Image(systemName: "arrow.down.circle")
+                            .font(.system(size: 18))
+                            .foregroundColor(.primary.opacity(0.8))
+                        Text("Download LocalDevVPN")
+                            .foregroundColor(.primary.opacity(0.8))
+                        Spacer()
+                    }
+                    .padding(.vertical, 8)
+                }
+                
+                Button(action: {
                     if let url = URL(string: "https://discord.gg/qahjXNTDwS") {
                         UIApplication.shared.open(url)
                     }
