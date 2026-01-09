@@ -322,7 +322,6 @@ struct ScriptListView: View {
             ("maciOS", "maciOS.js"),
             ("Amethyst-MeloNX", "Amethyst-MeloNX.js"),
             ("Geode", "Geode.js"),
-            ("MeloNX", "MeloNX.js"),
             ("manic", "manic.js"),
             ("UTM-Dolphin", "UTM-Dolphin.js")
         ]
