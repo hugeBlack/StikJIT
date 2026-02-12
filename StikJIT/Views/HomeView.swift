@@ -1671,7 +1671,7 @@ struct HomeView: View {
                             .foregroundStyle(.secondary)
                             .multilineTextAlignment(.center)
                     }
-                    .frame(width: 80)
+                    .frame(width: 100)
                 }
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel("\(light.title) status")
